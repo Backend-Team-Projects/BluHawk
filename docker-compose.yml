@@ -1,0 +1,17 @@
+
+services:
+  db:
+    image: postgres:latest
+    container_name: postgresql-db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: bluhawkdb
+    ports:
+      - "5434:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/bluhawk
+    restart: always
+
+volumes:
+  db_data:

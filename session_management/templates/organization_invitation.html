@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>You're Invited to Join {{ organization }}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f7fa;
+      padding: 30px;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background-color: #ffffff;
+      border-radius: 10px;
+      padding: 40px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    h2 {
+      color: #333333;
+    }
+    p {
+      color: #555555;
+      font-size: 16px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      margin-top: 20px;
+      background-color: #0057b8;
+      color: #ffffff !important;
+      text-decoration: none;
+      border-radius: 5px;
+      font-weight: bold;
+    }
+    .btn:hover {
+      background-color: #003f87;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>You're Invited to Join {{ organization }}</h2>
+    <p>Hello,</p>
+    <p>You have been invited to join <strong>{{ organization }}</strong> as a <strong>{{ role|title }}</strong>.</p>
+    <p>Please click the button below to view and accept/reject the invitation:</p>
+
+    <a href="{{ verification_url }}" class="btn" role="button">Review Invitation</a>
+
+    <p>If you did not expect this invitation, you can safely ignore this email.</p>
+    <p>— The {{ organization }} Team</p>
+  </div>
+</body>
+</html>

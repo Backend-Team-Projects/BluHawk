@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Invitation {{ status|capfirst }} by {{ invitee_email }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 30px; margin: 0; }
+        .email-container { max-width: 600px; background-color: #ffffff; margin: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); padding: 30px; }
+        h2 { color: #333333; font-size: 24px; margin-bottom: 10px; }
+        p { color: #555555; font-size: 16px; line-height: 1.6; }
+        .status-accepted { color: green; font-weight: bold; }
+        .status-rejected { color: red; font-weight: bold; }
+        hr { margin: 30px 0; border: none; border-top: 1px solid #dddddd; }
+        .footer { color: #999999; font-size: 14px; }
+    </style> 
+</head>
+<body>
+    <div class="email-container">
+        <h2>Invitation {{ status|capfirst }}ed</h2>
+
+        <p>
+            <strong>{{ invitee_email }}</strong> has <span class="status-{{ status }}">{{ status }}ed</span>
+            the invitation to join <strong>{{ organization_name }}</strong> as a <strong>{{ role }}</strong>.
+        </p>
+
+        <p>This invitation was originally sent by <strong>{{ invited_by }}</strong>.</p>
+
+        {% if status == "accept" %}
+        <p>The new member is now part of your organization. You can view them under members.</p>
+        {% else %}
+        <p>No further action is needed, but you may follow up if required.</p>
+        {% endif %}
+
+        <hr>
+        <p class="footer">Thank you,<br><strong>The BluHawk Team</strong></p>
+    </div>
+</body>
+</html>
