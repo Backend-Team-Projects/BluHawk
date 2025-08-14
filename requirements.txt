@@ -1,0 +1,96 @@
+Django==5.1.5
+djangorestframework==3.15.2
+djangorestframework_simplejwt==5.4.0
+django-cors-headers==4.6.0
+gunicorn==23.0.0
+psycopg2-binary==2.9.10
+pymongo==4.10.1
+redis==5.2.1
+python-dotenv==1.0.1
+uvicorn==0.34.0
+requests==2.32.3
+PyJWT==2.10.1
+orjson==3.10.15
+celery==5.4.0
+kombu==5.4.2
+pika==1.3.2
+django-celery-beat
+google-generativeai
+pystyle
+email_validator
+whois
+openpyxl
+python-magic
+docx
+python-docx
+bs4
+openai
+shodan
+django-jazzmin
+dnspython
+python-whois
+phonenumbers
+email_validator
+beautifulsoup4
+Pillow
+PyPDF2
+python-docx
+python-pptx
+openai
+mutagen
+tinytag
+tqdm
+python-magic
+exa-py
+django_redis
+moralis
+cryptography
+sublist3r
+
+
+
+# sudo apt update
+# sudo apt install wapiti
+# pip install wapiti3
+
+# wget https://gitlab.com/api/v4/projects/33695681/packages/generic/nrich/latest/nrich_latest_x86_64.deb
+# sudo dpkg -i nrich_latest_x86_64.deb
+
+# sudo apt update
+# sudo apt install postgresql postgresql-contrib libpq-dev -y
+
+# sudo service postgresql start
+# sudo -u postgres psql
+
+# CREATE USER admin WITH PASSWORD 'admin';
+
+# ALTER USER admin WITH SUPERUSER;
+
+# -- OR (safer alternative): grant createdb and createrole
+# -- ALTER USER admin WITH CREATEDB CREATEROLE;
+
+# -- Create database
+# CREATE DATABASE bluhawkdb OWNER admin;
+
+# -- Exit
+# \q
+
+# sudo systemctl restart postgresql
+
+# pip install python-pptx
+
+# python3 manage.py makemigrations
+
+# python3 manage.py migrate
+
+# python manage.py makemigrations session_management usage dashboard clatscope BluHawk
+
+# sudo apt update
+
+# sudo apt install nginx -y
+
+# sudo apt install certbot python3-certbot-nginx -y
+
+# source venv/bin/activate
+
+
