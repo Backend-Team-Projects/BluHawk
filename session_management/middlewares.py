@@ -6,6 +6,8 @@ from django.http import JsonResponse
 from django.urls import resolve, Resolver404
 from django.utils.timezone import now
 from .models import OrganizationManagement, Scanlog, Organization
+from attack_surface.models import Notification
+from user_settings.models import UserProfile
 from BluHawk.config import view_display_pairs
 from BluHawk.utils import *
 
@@ -22,6 +24,7 @@ class OrganizationContextMiddleware:
             return self.get_response(request)
 
         try:
+            # Resolve view name
             try:
                 resolved = resolve(request.path_info)
                 current_view = resolved.url_name
@@ -31,6 +34,7 @@ class OrganizationContextMiddleware:
             if current_view not in self.included_views:
                 return self.get_response(request)
 
+            # Fetch user memberships
             memberships = OrganizationManagement.objects.filter(user=request.user).select_related('organization')
             if not memberships:
                 logger.warning(f"User {request.user.email} has no organization memberships")
@@ -47,54 +51,68 @@ class OrganizationContextMiddleware:
             request.user_organizations = organizations
             request.user_org_roles = org_roles
 
-            organization_id = request.headers.get('X-Organization-ID') or request.headers.get('x-organization-id')
-            organization = None
-            normalized_org_id = None
-            if organization_id:
-                try:
-                    normalized_org_id = str(uuid.UUID(organization_id)).replace('-', '') if '-' in organization_id else organization_id
-                    if normalized_org_id not in org_roles:
-                        return JsonResponse({'message': 'You do not have access to this organization.'}, status=403)
-                    organization = Organization.objects.get(id=uuid.UUID(organization_id) if '-' in organization_id else organization_id)
-                except (ValueError, uuid.UUID):
-                    return JsonResponse({'message': 'Invalid organization ID.'}, status=400)
-                except Organization.DoesNotExist:
-                    return JsonResponse({'message': 'Organization not found.'}, status=404)
-            else:
-                if memberships:
-                    organization = memberships[0].organization
-                    normalized_org_id = str(organization.id).replace('-', '')
-
+            # Proceed with the request
             response = self.get_response(request)
 
+            # Log Scan in background
             def log_thread():
                 try:
-                    if not organization or response.status_code != 200:
-                        return  # Only log if organization exists and status code is 200
+                    if response.status_code != 200:
+                        return  # Only log successful responses
 
                     scan_name = self.view_display_names.get(current_view, current_view)
 
-                    log = Scanlog(
+                    # Fetch active organization from UserProfile
+                    try:
+                        profile = UserProfile.objects.get(user=request.user)
+                        organization = profile.active_organization
+                    except UserProfile.DoesNotExist:
+                        organization = None
+
+                    if not organization:
+                        logger.warning(f"User {request.user.email} has no active organization set")
+                        return
+
+                    # Fetch role for this organization
+                    membership = OrganizationManagement.objects.filter(
+                        user=request.user, organization=organization
+                    ).first()
+                    role = membership.role if membership else "none"
+
+                    # Prepare JSON data
+                    if hasattr(response, 'content') and response.get('Content-Type', '').startswith('application/json'):
+                        try:
+                            json_data = json.loads(response.content.decode('utf-8', errors='ignore'))
+                        except json.JSONDecodeError:
+                            json_data = {"error": "Failed to decode JSON response"}
+                    else:
+                        json_data = {"note": "No JSON content in response"}
+
+                    # --- CREATE NOTIFICATION BEFORE SAVING SCANLOG ---
+                    # Notification.objects.create(
+                    #     email=request.user.email,
+                    #     heading=f"Scan Completed: {scan_name}",
+                    #     message=f"Your scan '{scan_name}' was completed successfully.",
+                    #     actionable=False,
+                    #     json_data=json_data,
+                    #     type='Scan Completed',
+                    #     organization_id=str(organization.id).replace('-', ''),
+                    # )
+
+                    # --- SAVE SCANLOG ---
+                    Scanlog.objects.create(
                         user=request.user,
                         scan_name=scan_name,
                         group='organization',
                         status_code=response.status_code,
                         organization=organization,
-                        role=org_roles.get(normalized_org_id, 'none'),
-                        timestamp=now()
+                        role=role,
+                        timestamp=now(),
+                        json_data=json_data
                     )
 
-                    if hasattr(response, 'content') and response.get('Content-Type', '').startswith('application/json'):
-                        try:
-                            log.json_data = json.loads(response.content.decode('utf-8', errors='ignore'))
-                        except json.JSONDecodeError:
-                            log.json_data = {"error": "Failed to decode JSON response"}
-                    else:
-                        log.json_data = {"note": "No JSON content in response"}
-
-                    log.save()
                 except Exception as log_error:
-                    logger.error(f"Failed to log Scanlog: {str(log_error)}", exc_info=True)
+                    logger.error(f"Failed to log Scanlog/Notification: {str(log_error)}", exc_info=True)
 
             threading.Thread(target=log_thread).start()
             return response

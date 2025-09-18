@@ -31,6 +31,7 @@ class UserSettingsView(APIView):
         data = {
             "name": user_profile.name,
             "phone": user_profile.phone,
+            "primary_email": user_profile.user.email,
             "secondary_email": user_profile.secondary_email,
             "dark_mode": user_settings.dark_mode,
             "email_notifications_enabled": user_settings.email_notifications_enabled,
@@ -38,7 +39,7 @@ class UserSettingsView(APIView):
             "two_factor_auth_enabled": user_settings.two_factor_auth_enabled,
         }
         # print(data)
-        # return Response(data, status=status.HTTP_200_OK)
+        return Response(data, status=status.HTTP_200_OK)
 
     def post(self, request):
         user = request.user

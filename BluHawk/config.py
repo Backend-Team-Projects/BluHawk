@@ -73,7 +73,8 @@ view_display_pairs = {
     'port_scan': 'Port Scanner',
     'subdomain_search': 'Subdomain Finder',
     # 'full_subdomain_search': 'Full Subdomain Enumeration',
-    'get_report': 'File Analysis'
+    'get_report': 'File Analysis',
+    'find_intel_full_scan':'Full Threat Intel Scan'
 }
 
 COMMON_TCP_PORTS = [
