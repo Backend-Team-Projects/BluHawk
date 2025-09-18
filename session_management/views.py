@@ -45,6 +45,7 @@ from session_management.models import (
     Organization,
     OrganizationInvitation,
 )
+from user_settings.models import UserProfile
 from attack_surface.models import (
     Notification,
 )
@@ -1372,12 +1373,76 @@ class CheckUnseenNotificationsAPIView(APIView):
     def get(self, request):
         try:
             email = request.user.email
-            unseen_count = Notification.objects.filter(email=email, seen=False).count()
 
+            # Fetch unseen notifications of type "Scan Completed"
+            scan_notifications = Notification.objects.filter(
+                email=email,
+                seen=False,
+                type__icontains="Scan Completed"
+            )
+
+            if scan_notifications.exists():
+                # Mark notifications as seen
+                scan_notifications.update(seen=True)
+
+                # Prepare data to return
+                data = [
+                    {
+                        "id": n.id,
+                        "heading": n.heading,
+                        "message": n.message,
+                        "type": n.type,
+                        "seen": True,  # already marked as seen
+                        "actionable": n.actionable,  # will be False
+                        "json_data": n.json_data,
+                        "organization_id": n.organization_id,
+                        "created_at": n.created_at
+                    }
+                    for n in scan_notifications
+                ]
+
+                return Response({
+                    "notifications": data,
+                    "message": "Scan notifications fetched and marked as seen.",
+                    "count": scan_notifications.count()
+                }, status=200)
+
+            # If no matching notifications
+            unseen_count = Notification.objects.filter(email=email, seen=False).count()
             return Response({
+                "notifications": [],
                 "unseen_count": unseen_count
             }, status=200)
+
         except Exception as e:
-            log_exception(e)
             logger.error(f"Error checking unseen notifications: {str(e)}", exc_info=True)
             return Response({"message": "An error occurred while checking unseen notifications."}, status=500)
+
+
+
+class SetActiveOrganization(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        org_id = request.data.get("organization_id")
+        if not org_id:
+            return Response({"message": "Missing organization ID"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            organization = Organization.objects.get(id=org_id)
+        except Organization.DoesNotExist:
+            return Response({"message": "Organization not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check membership
+        is_member = OrganizationManagement.objects.filter(
+            organization=organization, user=request.user
+        ).exists()
+        if not is_member:
+            return Response({"message": "You are not a member of this organization"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Update active organization
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        profile.active_organization = organization
+        profile.save()
+
+        return Response({"message": f"Active organization set to {organization.name}"}, status=status.HTTP_200_OK)

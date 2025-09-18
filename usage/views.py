@@ -301,105 +301,153 @@ class GetUsageStats(APIView):
         
 
 from session_management.models import Scanlog
+from session_management.models import OrganizationManagement
 from django.db.models import Q
+from django.core.paginator import Paginator
+from uuid import UUID
 
 class GetPaginatedScanLogs(APIView):
     permission_classes = [IsAuthenticated]
+    max_page_size = 100
 
-    def get(self, request, *args, **kwargs):
+    def _normalize_org_id(self, org_id):
+        if not org_id:
+            return None
+        try:
+            return UUID(org_id)
+        except Exception:
+            try:
+                return int(org_id)
+            except Exception:
+                return org_id
+
+    def get(self, request):
         try:
             user = request.user
-            if not user:
-                return Response({"error": "User not found"}, status=status.HTTP_400_BAD_REQUEST)
+            org_id = request.query_params.get("organization_id")
+            time_filter = request.query_params.get("time_filter")
+            order_by = request.query_params.get("order_by", "timestamp")
+            order = request.query_params.get("order", "desc")
 
-            # Base queryset with sorting at database level
-            logs_queryset = Scanlog.objects.filter(user=user).order_by('-timestamp')
+            # --- Pagination ---
+            try:
+                page = int(request.query_params.get("page", 1))
+                page_size = min(int(request.query_params.get("page_size", 20)), self.max_page_size)
+            except ValueError:
+                return Response({"error": "Invalid pagination parameters"}, status=400)
 
-            # Apply time filter or custom range
-            time_filter = request.query_params.get('time_filter', 'alltime')
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
+            # --- Build roles_summary ---
+            memberships = OrganizationManagement.objects.filter(user=user)
+            roles_summary = {"admin": [], "analyst": [], "viewer": []}
+            for m in memberships:
+                if m.role in roles_summary:
+                    roles_summary[m.role].append(
+                        {"org_id": str(m.organization.id), "org_name": m.organization.name}
+                    )
 
-            now = datetime.now()
+            if not org_id:
+                return Response({
+                    "roles_summary": roles_summary,
+                    "organization_selected": None,
+                    "role": None,
+                    "members": [],
+                    "logs": [],
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": 0,
+                    "total_logs": 0,
+                })
 
-            if start_date or end_date:
-                if not (start_date and end_date):
-                    return Response({"error": "Both start_date and end_date are required for custom range."},
-                                    status=status.HTTP_400_BAD_REQUEST)
-                try:
-                    start_time = datetime.strptime(start_date, '%Y-%m-%d').replace(hour=0, minute=0, second=0, microsecond=0)
-                    end_time = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59, microsecond=999999)
-                    logs_queryset = logs_queryset.filter(timestamp__range=[start_time, end_time])
-                except ValueError:
-                    return Response({"error": "Invalid date format. Use YYYY-MM-DD for both start_date and end_date."},
-                                    status=status.HTTP_400_BAD_REQUEST)
-            elif time_filter:
-                if time_filter == 'today':
-                    start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                    logs_queryset = logs_queryset.filter(timestamp__gte=start_time)
-                elif time_filter == 'yesterday':
-                    start_time = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                    end_time = start_time + timedelta(days=1)
-                    logs_queryset = logs_queryset.filter(timestamp__range=[start_time, end_time])
-                elif time_filter == 'this_week':
-                    start_time = now - timedelta(days=now.weekday())
-                    start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
-                    logs_queryset = logs_queryset.filter(timestamp__gte=start_time)
-                elif time_filter == 'this_month':
-                    start_time = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                    logs_queryset = logs_queryset.filter(timestamp__gte=start_time)
-                elif time_filter == 'this_year':
-                    start_time = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-                    logs_queryset = logs_queryset.filter(timestamp__gte=start_time)
-                elif time_filter == 'alltime':
-                    pass  # No filter
+            normalized_org_id = self._normalize_org_id(org_id)
 
-            # Apply role and user filter on the time-filtered data
-            role_user_filter = request.query_params.get('role_user', None)
-            if role_user_filter:
-                logs_queryset = logs_queryset.filter(
-                    Q(role__icontains=role_user_filter) |
-                    Q(user__username__icontains=role_user_filter)
+            # --- Validate membership ---
+            try:
+                membership = memberships.get(organization__id=normalized_org_id)
+            except OrganizationManagement.DoesNotExist:
+                return Response({"error": "You do not belong to this organization"}, status=403)
+
+            user_role = membership.role
+
+            # --- Query members & logs ---
+            if user_role == "admin":
+                members_qs = OrganizationManagement.objects.filter(
+                    organization__id=normalized_org_id
+                )
+                members_list = [
+                    {
+                        "user_id": m.user.id,
+                        "org_id": m.organization.id,
+                        "username": m.user.username,
+                        "name": getattr(m.user.userprofile, 'name', None)
+                    }
+                    for m in members_qs
+                ]
+                user_ids_in_org = [m.user.id for m in members_qs]
+
+                # --- Directly serialize scan logs using values() ---
+                logs_qs = Scanlog.objects.filter(user_id__in=user_ids_in_org).values(
+                    "scan_name",
+                    "role",
+                    "timestamp",
+                    "json_data",
+                    "organization_id",
+                    "user__id",
+                    "user__username",
+                    "user__userprofile__name"
+                )
+            else:
+                members_list = []
+                logs_qs = Scanlog.objects.filter(
+                    user=user, organization__id=normalized_org_id
+                ).values(
+                    "scan_name",
+                    "role",
+                    "timestamp",
+                    "json_data",
+                    "organization_id",
+                    "user__id",
+                    "user__username",
+                    "user__userprofile__name"
                 )
 
-            # Select specific fields
-            logs_queryset = logs_queryset.values(
-                'scan_name',
-                'user__username',
-                'role',
-                'timestamp',
-                'json_data'
-            )
+            # --- Apply time filter ---
+            if time_filter:
+                now_time = now()
+                if time_filter == "today":
+                    logs_qs = logs_qs.filter(timestamp__date=now_time.date())
+                elif time_filter == "yesterday":
+                    logs_qs = logs_qs.filter(timestamp__date=now_time.date() - timedelta(days=1))
+                elif time_filter == "this_week":
+                    start_of_week = now_time - timedelta(days=now_time.weekday())
+                    logs_qs = logs_qs.filter(timestamp__gte=start_of_week)
+                elif time_filter == "this_month":
+                    logs_qs = logs_qs.filter(timestamp__year=now_time.year, timestamp__month=now_time.month)
+                elif time_filter == "this_year":
+                    logs_qs = logs_qs.filter(timestamp__year=now_time.year)
 
-            # Pagination
-            try:
-                page = int(request.query_params.get('page', 1))
-            except ValueError:
-                return Response({"error": "Invalid page number."}, status=status.HTTP_400_BAD_REQUEST)
+            # --- Ordering ---
+            if order not in ["asc", "desc"]:
+                order = "desc"
+            ordering = order_by if order == "asc" else f"-{order_by}"
+            logs_qs = logs_qs.order_by(ordering)
 
-            page_size = 20
-            max_pages = 50
-
-            if page < 1:
-                page = 1
-            elif page > max_pages:
-                page = max_pages
-
-            start = (page - 1) * page_size
-            end = start + page_size
-            paginated_logs = list(logs_queryset[start:end])
-
-            total_logs = logs_queryset.count()
-            total_pages = min((total_logs // page_size) + (1 if total_logs % page_size > 0 else 0), max_pages)
+            # --- Pagination ---
+            paginator = Paginator(list(logs_qs), page_size)
+            page_obj = paginator.get_page(page)
+            logs_list = list(page_obj.object_list)
 
             return Response({
-                "logs": paginated_logs,
+                "roles_summary": roles_summary,
+                "organization_selected": org_id,
+                "role": user_role,
+                "members": members_list,
+                "logs": logs_list,
                 "page": page,
                 "page_size": page_size,
-                "total_pages": total_pages,
-                "total_logs": total_logs
-            }, status=status.HTTP_200_OK)
+                "total_pages": paginator.num_pages,
+                "total_logs": paginator.count,
+            })
 
         except Exception as e:
             log_exception(e)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": str(e)}, status=500)

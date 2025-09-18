@@ -23,6 +23,7 @@ urlpatterns = [
     path('invitation_manage/<str:organization_id>/', InvitationManagement.as_view(), name='invitation-manage'),
     path('notifications/', NotificationAPIView.as_view(), name='notification_list'),
     path('notifications/unseen-status/', CheckUnseenNotificationsAPIView.as_view(), name='check-unseen'),
+    path("set_active_organization/", SetActiveOrganization.as_view(), name="set_active_organization"),
 
     # 2fa
     path('2fa_verification/', VerifyTwoFactorView.as_view(), name='2fa_verification'),
