@@ -8,10 +8,11 @@ from django.utils.timezone import now
 from .models import OrganizationManagement, Scanlog, Organization
 from attack_surface.models import Notification
 from user_settings.models import UserProfile
-from BluHawk.config import view_display_pairs
+from BluHawk.config import view_display_pairs, role_based_views  # ✅ import here
 from BluHawk.utils import *
 
 logger = logging.getLogger(__name__)
+
 
 class OrganizationContextMiddleware:
     def __init__(self, get_response):
@@ -51,6 +52,25 @@ class OrganizationContextMiddleware:
             request.user_organizations = organizations
             request.user_org_roles = org_roles
 
+            # --- NEW CHECK 1: Ensure active organization exists ---
+            try:
+                profile = UserProfile.objects.get(user=request.user)
+                active_org = profile.active_organization
+            except UserProfile.DoesNotExist:
+                active_org = None
+
+            if not active_org:
+                return JsonResponse({'message': 'Please set an active organization before running this scan.'}, status=403)
+
+            # --- NEW CHECK 2: Ensure current view is allowed for active role ---
+            membership = OrganizationManagement.objects.filter(
+                user=request.user, organization=active_org
+            ).first()
+            active_role = membership.role if membership else None
+
+            if not active_role or current_view not in role_based_views.get(active_role, []):
+                return JsonResponse({'message': 'You are not allowed to access this scan.'}, status=403)
+
             # Proceed with the request
             response = self.get_response(request)
 
@@ -62,7 +82,7 @@ class OrganizationContextMiddleware:
 
                     scan_name = self.view_display_names.get(current_view, current_view)
 
-                    # Fetch active organization from UserProfile
+                    # Fetch active organization again for logging
                     try:
                         profile = UserProfile.objects.get(user=request.user)
                         organization = profile.active_organization

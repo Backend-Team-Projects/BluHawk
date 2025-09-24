@@ -110,3 +110,48 @@ COMMON_TCP_PORTS = [
     8200, 8300, 8502, 8601, 8700, 8800, 8889, 8890, 9009, 9101, 9201, 9301,
     9400, 9500, 9600, 9700, 9800, 9900, 10010, 10020, 10100, 10200, 10300
 ]
+
+
+role_based_views = {
+    "admin": [
+        "attack-surface-scan",
+        "get_username",
+        "get_deep_account",
+        "get_wayback",
+        "get_ssl_info",
+        "get_nrich",
+        "wallet",
+        "wallet-history",
+        "nftswallet-history",
+        "wapiti_scan",
+        "port_scan",
+        "subdomain_search",
+        "get_report",
+        "find_intel_full_scan",
+    ],
+    "analyst": [
+        "find_intel_full_scan",
+        "get_username",
+        "get_deep_account",
+        "get_wayback",
+        "get_ssl_info",
+        "get_nrich",
+        "wallet",
+        "wallet-history",
+        "nftswallet-history",
+        "wapiti_scan",
+        "port_scan",
+        "subdomain_search",
+        "get_report",
+    ],
+    "viewer": [
+        "get_username",
+        "get_deep_account",
+        "get_wayback",
+        "get_ssl_info",
+        "wallet",
+        "wallet-history",
+        "nftswallet-history",
+        "get_report",
+    ]
+}

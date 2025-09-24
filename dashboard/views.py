@@ -1004,7 +1004,23 @@ class FindIntelFullScan(APIView):
                 data = report.scan_data or {}
                 scan_age = now() - report.scan_started_at
 
-                # Retry if previous scan was partial
+                # ---------------------- 24-Hour Check ----------------------
+                if scan_age.total_seconds() > 24 * 3600:
+                    # Reset old scan for a new run instead of deleting
+                    with transaction.atomic():
+                        report.scan_started_at = now()
+                        report.scan_completed_at = None
+                        report.status = STATUS_PROCESSING
+                        report.scan_data = {}  # clear previous scan data
+                        report.save()
+                    self.start_all_scans(query, search_type)
+                    return Response({
+                        "status": "processing",
+                        "message": "Previous scan older than 24h. New scan started.",
+                        "scan_started_at": report.scan_started_at
+                    }, status=STATUS_PROCESSING)
+
+                 # Retry if previous scan was partial
                 if report.status == STATUS_PARTIAL:
                     report.status = STATUS_PROCESSING
                     report.scan_started_at = now()
