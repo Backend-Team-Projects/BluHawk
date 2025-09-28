@@ -6,6 +6,7 @@ from rest_framework import status
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import serializers
 
 from django.utils.timezone import now
 
@@ -32,43 +33,76 @@ from clatscope.ClatScope import (
     check_ssl_cert,
     wayback_lookup,
     username_check,
-    whois_lookup
+    whois_lookup,
+    check_data_freshness
 )
 
 from datetime import datetime, timedelta, timezone
 import subprocess
 from dashboard.views import get_cve_data
+import time
+
+# def get_nrich_data(ip_address):
+#     result = subprocess.run(
+#             ["nrich", "-o", "json", "-"],
+#             input=ip_address,
+#             text=True,
+#             capture_output=True,
+#             check=True
+#         )
+    
+            
+#     data = json.loads(result.stdout)[0]
+#     try:
+#         cve_data_list = {}
+#         vulns = data.get('vulns')
+#         for vuln in vulns:
+#                 print(vuln)
+#                 cve_id = vuln
+#                 cve_data = get_cve_data(cve_id)
+#                 if cve_data.get('status', 'error') == 'success':
+#                     cve_data_list[cve_id] = get_cve_data(cve_id).get('data', {}).get('json_data', {})
+
+#         data['cve_vulns'] = cve_data_list
+
+#     except Exception as e:
+#         log_exception(e)
+
+#     return {
+#             "status": "success",
+#             "data": [data]
+#         }
 
 def get_nrich_data(ip_address):
     result = subprocess.run(
-            ["nrich", "-o", "json", "-"],
-            input=ip_address,
-            text=True,
-            capture_output=True,
-            check=True
-        )
+        ["nrich", "-o", "json", "-"],
+        input=ip_address,
+        text=True,
+        capture_output=True,
+        check=True
+    )
     
-            
-    data = json.loads(result.stdout)[0]
     try:
+        data_list = json.loads(result.stdout)
+        if not data_list:
+            return {"status": "error", "message": "No data returned for this IP", "data": []}
+        
+        data = data_list[0]
+        
         cve_data_list = {}
-        vulns = data.get('vulns')
+        vulns = data.get('vulns', [])
         for vuln in vulns:
-                print(vuln)
-                cve_id = vuln
-                cve_data = get_cve_data(cve_id)
-                if cve_data.get('status', 'error') == 'success':
-                    cve_data_list[cve_id] = get_cve_data(cve_id).get('data', {}).get('json_data', {})
-
+            cve_data = get_cve_data(vuln)
+            if cve_data.get('status') == 'success':
+                cve_data_list[vuln] = cve_data.get('data', {}).get('json_data', {})
         data['cve_vulns'] = cve_data_list
 
+        return {"status": "success", "data": [data]}
+    
     except Exception as e:
         log_exception(e)
+        return {"status": "error", "message": str(e), "data": []}
 
-    return {
-            "status": "success",
-            "data": [data]
-        }
 
 
 def check_data_freshness(data_object):
@@ -114,19 +148,45 @@ class ip_info_async(AsyncDataProcessing):
         except Exception as e:
             log_exception(e)
 
+class PhoneNumberInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PhoneNumberInfo
+        fields = ['id', 'json_data', 'created', 'updated_at']
+
+def clean_phone_number(phone_number):
+    # Remove <, >, spaces, etc., but keep the leading +
+    phone_number = phone_number.strip()
+    phone_number = phone_number.replace('<', '').replace('>', '').replace(' ', '')
+    
+    if phone_number.startswith('+'):
+        return '+' + re.sub(r'[^\d]', '', phone_number)
+    else:
+        return re.sub(r'[^\d]', '', phone_number)
+
 class phone_info_async(AsyncDataProcessing):
     def __init__(self):
         super().__init__(PhoneNumberInfo, 'id', phone_info, 600)
     
     def save_data(self, query, additional_data):
+        # print(f"[DEBUG] save_data started for query: {query}")
         try:
-            response = self.fun(query)
+            response = self.fun(query) or {}
+            # print(f"[DEBUG] phone_info response: {response}")
+            
             if response.get("status") == "success":
+                # print(f"[DEBUG] Saving data to DB for query: {query}")
                 report = self.model(id=query, json_data=response.get('data'))
                 report.save()
-            
+            #     print(f"[DEBUG] Data saved successfully for query: {query}")
+            # else:
+            #     print(f"[DEBUG] phone_info returned non-success status for query: {query}")
+                
         except Exception as e:
+            # print(f"[DEBUG] Exception in save_data for query {query}: {e}")
             log_exception(e)
+        # finally:
+        #     print(f"[DEBUG] save_data finished for query: {query}")
+
 
 class check_ssl_cert_async(AsyncDataProcessing):
     def __init__(self):
@@ -215,29 +275,43 @@ class NrichAPI(APIView):
     def get(self, request):
         try:
             query = request.query_params.get('query')
-
             if not query:
                 return Response({"error": "Missing 'query' parameter"}, status=400)
 
-            data = nrich.handle(query=query)
+            max_wait = 30  # seconds
+            start_time = time.time()
 
-            if data.get("status") == "completed":
-                print("completed")
-                if check_data_freshness(data.get('data', {})):
-                    return Response(data , status=status.HTTP_200_OK)
-                else:
-                    print('not fresh')
-                    Nrich.objects.filter(id=query).delete()
-                    data = nrich.handle(query=query)
-                    return Response(data, status=status.HTTP_202_ACCEPTED)
-            elif data.get("status", 'error') == "processing":
-                return Response(data, status=status.HTTP_202_ACCEPTED)
-            else:
-                return Response(data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
+            while True:
+                data = nrich.handle(query=query)  # retry NRICH each loop
+                if data.get('data'):
+                    # Data is ready → check freshness
+                    if data.get("status") == "completed":
+                        if check_data_freshness(data.get('data', {})):
+                            return Response(data, status=status.HTTP_200_OK)
+                        else:
+                            Nrich.objects.filter(id=query).delete()
+                            data = nrich.handle(query=query)
+                            return Response(data, status=status.HTTP_202_ACCEPTED)
+                    elif data.get("status", "error") == "processing":
+                        return Response(data, status=status.HTTP_202_ACCEPTED)
+                    else:
+                        return Response(data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                # Check elapsed time
+                elapsed = time.time() - start_time
+                if elapsed >= max_wait:
+                    return Response(
+                        {"status": "error", "message": "Data not found, try again later."},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                # Wait a short time before retrying
+                time.sleep(2)  # retry every 2 seconds
+
         except Exception as e:
             log_exception(e)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class DeepAccountSearchAPI(APIView):
     permission_classes = [IsAuthenticated]
@@ -297,31 +371,51 @@ class SSLInfoAPI(APIView):
         
 class PhoneInfoAPI(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
         try:
             query = request.query_params.get('query')
-
             if not query:
                 return Response({"error": "Missing 'query' parameter"}, status=400)
 
-            data = phone_num_info.handle(query=query)
+            # Clean the query: remove <, >, spaces, etc.
+            query = clean_phone_number(query)
+            # print(f"[DEBUG] Cleaned query: {query}")
 
-            if data.get("status") == "completed":
-                if check_data_freshness(data.get('data', {})):
-                    return Response(data , status=status.HTTP_200_OK)
-                else:
-                    PhoneNumberInfo.objects.filter(id=query).delete()
-                    data = phone_num_info.handle(query=query)
-                    return Response(data, status=status.HTTP_202_ACCEPTED)
-            elif data.get("status", 'error') == "processing":
-                return Response(data, status=status.HTTP_202_ACCEPTED)
+            # Try to fetch existing DB record
+            db_record = PhoneNumberInfo.objects.filter(id=query).first()
+
+            if db_record and check_data_freshness(db_record):
+                # If data is fresh, serialize and return it
+                serializer = PhoneNumberInfoSerializer(db_record)
+                return Response({
+                    "message": "Data processing successful",
+                    "status": "completed",
+                    "data": serializer.data
+                }, status=200)
             else:
-                return Response(data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
+                # If no record or stale, delete old record if exists
+                if db_record:
+                    db_record.delete()
+
+                # Trigger async fetch
+                data = phone_num_info.handle(query=query)
+
+                # If completed, serialize the new record
+                if data.get("status") == "completed":
+                    new_record = PhoneNumberInfo.objects.filter(id=query).first()
+                    if new_record:
+                        serializer = PhoneNumberInfoSerializer(new_record)
+                        data["data"] = serializer.data
+
+                # Return status based on async thread
+                return Response(data, status=202 if data.get("status") == "processing" else 200)
+
         except Exception as e:
             log_exception(e)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": str(e)}, status=500)
+
+
 
 class WaybackAPI(APIView):
     permission_classes = [IsAuthenticated]

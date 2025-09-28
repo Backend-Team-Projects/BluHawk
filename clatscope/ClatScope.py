@@ -41,6 +41,11 @@ from mutagen.oggvorbis import OggVorbis
 from tinytag import TinyTag
 
 from BluHawk.utils import log_exception
+import re
+import phonenumbers
+from phonenumbers import geocoder, carrier, is_valid_number, NumberParseException, parse
+from datetime import timedelta
+from django.utils.timezone import now
 
 default_color = Colors.red
 API_KEY = "INSERT GOOGLE CUSTOM SEARCH API KEY HERE"
@@ -464,36 +469,63 @@ def deep_account_search(nickname, **kwargs):
         result_json['message'] = f"Error: {str(e)}"
         return result_json
     
-def phone_info(phone_number, **kwargs):
+def clean_phone_number(phone_number):
+    # Remove <, >, spaces, etc., but keep the leading +
+    phone_number = phone_number.strip().replace('<', '').replace('>', '').replace(' ', '')
+
+    if phone_number.startswith('+'):
+        # ✅ Keep + and only remove non-digits after it
+        return '+' + re.sub(r'[^\d]', '', phone_number[1:])
+    else:
+        # ❌ No + → reject immediately
+        raise ValueError("Phone number must start with + and country code")
+
+
+def phone_info(phone_number: str):
     result = {
         "status": "error",
         "message": "Error retrieving phone number info",
-        'data': {}
+        "data": {}
     }
     try:
-        parsed_number = phonenumbers.parse(phone_number)
+        # Clean number (remove spaces, <>, etc.)
+        phone_number = re.sub(r"[^\d+]", "", phone_number).strip()
+
+        # Auto-add '+' if missing
+        if not phone_number.startswith("+"):
+            phone_number = "+" + phone_number
+
+        # Parse the number
+        parsed_number = parse(phone_number, None)
+
+        # Validate number
+        if not is_valid_number(parsed_number):
+            raise ValueError("Invalid phone number")
+
+        # Extract details
         country = geocoder.country_name_for_number(parsed_number, "en")
         region = geocoder.description_for_number(parsed_number, "en")
-        operator = carrier.name_for_number(parsed_number, "en") if carrier else "" #the fix
-        valid = phonenumbers.is_valid_number(parsed_number)
-        validity = "Valid" if valid else "Invalid"
+        operator = carrier.name_for_number(parsed_number, "en")
 
-        result['status'] = 'success'
-        result['message'] = 'Phone number info retrieved successfully'
-        result['data'] = {
-                "phone_number": phone_number,
+        result = {
+            "status": "success",
+            "message": "Phone number info retrieved successfully",
+            "data": {
                 "country": country,
                 "region": region,
-                "operator": operator,
-                "validity": validity
+                "carrier": operator,
+                "created_at": now().strftime("%Y-%m-%d %H:%M:%S")
             }
-        return result
+        }
+    except NumberParseException as e:
+        result["message"] = f"Parsing error: {str(e)}"
+    except Exception as e:
+        log_exception(e)
 
-    except phonenumbers.phonenumberutil.NumberParseException:
-        return result
-        # clear()
-        # Write.Print(f"\n[!] > Error: invalid phone number format (+1-000-000-0000)", default_color, interval=0)
-    restart()
+    return result
+
+
+
 
 def reverse_phone_lookup(phone_number):
     base_prompt = (
@@ -3271,6 +3303,13 @@ def mac_address_lookup():
 
     print(output)
 
+
+def check_data_freshness(record, max_age_minutes=1440):  # 1440 mins = 24 hours
+    if not record:
+        return False
+    last_updated = record.updated_at
+    age = now() - last_updated
+    return age <= timedelta(minutes=max_age_minutes)
 
 def main():
     while True:

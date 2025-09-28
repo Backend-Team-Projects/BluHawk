@@ -48,18 +48,23 @@ class AsyncDataProcessing:
             return response
 
     def process_data(self, query, additional_data):
+        # print(f"[DEBUG] process_data called for: {query}")
         if self.is_thread_timed_out(query) and not self.active_threads.get(query).is_alive():
+            # print(f"[DEBUG] Thread timed out for: {query}")
             self.cleanup_thread(query)
             
         if self.thread_status.get(query) == self.status[0]:
+            # print(f"[DEBUG] Thread already processing for: {query}")
             return self.responses.get('processing')
 
-        thread = threading.Thread(target=self.save_data, args=( query,additional_data))
+        thread = threading.Thread(target=self.save_data, args=(query, additional_data))
         thread.start()
+        # print(f"[DEBUG] Thread started for: {query}")
         self.thread_status[query] = self.status[0]
         self.active_threads[query] = thread
         self.thread_start_time[query] = time.time()
         return self.responses.get('processing')
+
 
     def fetch_data(self,  query, additional_data):        
         if not query:
