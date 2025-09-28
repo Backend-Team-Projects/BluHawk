@@ -55,6 +55,20 @@ MIDDLEWARE = [
     'session_management.middlewares.OrganizationContextMiddleware',
 ]
 
+# Audit & Compliance Settings
+LOG_RETENTION_DAYS = 30
+BACKUP_INTERVAL_REQUESTS = 100
+COMPLIANCE_STANDARDS = {
+    'GDPR': {'enabled': True, 'retention_days': 365},
+    'PCI_DSS': {'enabled': True, 'log_sensitive': False},
+    'ISO_27001': {'enabled': True, 'backup_required': True}
+}
+
+# Restic Backup Configuration
+RESTIC_REPO_PATH = '/backup/bluhawk-repo'
+RESTIC_PASSWORD = 'admin@123'  # Match the password you set
+PG_DUMP_PATH = '/var/backups/bluhawk_db_dump.sql'
+
 ROOT_URLCONF = 'BluHawk.urls'
 
 CORS_ALLOW_ALL_ORIGINS = False
@@ -230,36 +244,62 @@ CSRF_TRUSTED_ORIGINS = [
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+        'compliance': {
+            'format': '[COMPLIANCE] {asctime} {levelname} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
-        'celery_file': {
+        'file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': os.path.join(settings.BASE_DIR, 'celery.log'),
+            'filename': '/log/django.log',
+            'formatter': 'verbose',
         },
         'console': {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'compliance_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': '/log/compliance_audit.log',
+            'formatter': 'compliance',
         },
     },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
+    },
     'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         'celery': {
-            'handlers': ['celery_file', 'console'],
+            'handlers': ['file'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
-        'celery.worker': {
-            'handlers': ['celery_file', 'console'],
+        'audit.compliance': {
+            'handlers': ['compliance_file', 'file'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
-        'celery.beat': {
-            'handlers': ['celery_file', 'console'],
+        '': {
+            'handlers': ['console', 'file'],
             'level': 'INFO',
-            'propagate': True,
-        },
-        'celery.task': {
-            'handlers': ['celery_file', 'console'],
-            'level': 'ERROR',
             'propagate': True,
         },
     },
@@ -280,21 +320,4 @@ from .load_env import VIRUS_TOTAL
 VIRUSTOTAL_API_KEY = VIRUS_TOTAL
 
 
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'WARNING',
-            'class': 'logging.FileHandler',
-            'filename': 'debug.log',
-        },
-    },
-    'loggers': {
-        '': {
-            'handlers': ['file'],
-            'level': 'WARNING',
-            'propagate': True,
-        },
-    },
-}
+

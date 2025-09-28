@@ -1,3 +1,4 @@
+# Core Django Requirements
 Django==5.1.5
 djangorestframework==3.15.2
 djangorestframework_simplejwt==5.4.0
@@ -6,91 +7,83 @@ gunicorn==23.0.0
 psycopg2-binary==2.9.10
 pymongo==4.10.1
 redis==5.2.1
-python-dotenv==1.0.1
-uvicorn==0.34.0
-requests==2.32.3
+
+# Authentication & Security
 PyJWT==2.10.1
 orjson==3.10.15
+
+# Celery & Task Queue
 celery==5.4.0
 kombu==5.4.2
 pika==1.3.2
 django-celery-beat
+
+# AI/ML & External APIs
 google-generativeai
-pystyle
-email_validator
-whois
+openai
+
+# Document Processing
 openpyxl
+python-docx
+PyPDF2
+python-pptx
+Pillow
 python-magic
 docx
-python-docx
-bs4
-openai
-shodan
-django-jazzmin
-dnspython
-python-whois
-phonenumbers
-email_validator
-beautifulsoup4
-Pillow
-PyPDF2
-python-docx
-python-pptx
-openai
 mutagen
 tinytag
 tqdm
-python-magic
-exa-py
-django_redis
-moralis
+
+# Security & Scanning
+shodan
 cryptography
 sublist3r
+phonenumbers
+email_validator
+beautifulsoup4
+bs4
+# NEW: Wapiti for vulnerability scanning
+wapiti3
 
+# Utilities & Libraries
+python-dotenv==1.0.1  # NEW: Environment variable loading
+uvicorn==0.34.0
+requests==2.32.3
+whois
+dnspython
+python-whois
 
+# Django Apps & Extensions
+pystyle
+exa-py  # NEW: Exa API integration
+django_redis
+moralis
+django-jazzmin
 
+# System Dependencies (Install via apt)
 # sudo apt update
 # sudo apt install wapiti
-# pip install wapiti3
-
 # wget https://gitlab.com/api/v4/projects/33695681/packages/generic/nrich/latest/nrich_latest_x86_64.deb
 # sudo dpkg -i nrich_latest_x86_64.deb
-
 # sudo apt update
 # sudo apt install postgresql postgresql-contrib libpq-dev -y
-
-# sudo service postgresql start
-# sudo -u postgres psql
-
-# CREATE USER admin WITH PASSWORD 'admin';
-
-# ALTER USER admin WITH SUPERUSER;
-
-# -- OR (safer alternative): grant createdb and createrole
-# -- ALTER USER admin WITH CREATEDB CREATEROLE;
-
-# -- Create database
-# CREATE DATABASE bluhawkdb OWNER admin;
-
-# -- Exit
-# \q
-
-# sudo systemctl restart postgresql
-
-# pip install python-pptx
-
-# python3 manage.py makemigrations
-
-# python3 manage.py migrate
-
-# python manage.py makemigrations session_management usage dashboard clatscope BluHawk
-
-# sudo apt update
-
 # sudo apt install nginx -y
-
 # sudo apt install certbot python3-certbot-nginx -y
+# sudo apt install restic postgresql-client -y  # NEW: For backup and database dump
 
-# source venv/bin/activate
+# Django Setup Commands
+# source myenv/bin/activate
+# python3 manage.py makemigrations
+# python3 manage.py migrate
+# python manage.py makemigrations session_management usage dashboard clatscope BluHawk
+# python manage.py createsuperuser
 
+# Restic Backup Setup
+# sudo mkdir -p /backup/bluhawk-repo /var/backups
+# sudo chown $USER:$USER /backup/bluhawk-repo /var/backups
+# restic init --repo /backup/bluhawk-repo
+# # Enter password 
 
+# Production Deployment
+# sudo systemctl restart postgresql
+# sudo service nginx restart

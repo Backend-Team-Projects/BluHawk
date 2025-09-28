@@ -24,6 +24,7 @@ TRACKED_ENDPOINTS = {
     "get_phone_info",
     "get_nrich",
     # "cpe_search",
+    "attack-surface-scan",
 }
 
 
@@ -49,6 +50,7 @@ TRACKED_ENDPOINTS_NAMES = {
     "get_ssl_info":{"name":"SSL Info", "page":"WildCard Intel"},
     "get_phone_info": {"name":"Phone Info", "page":"WildCard Intel"},
     "get_nrich":{"name":"Scan For CVE", "page":"WildCard Intel"},
+    "attack-surface-scan": {"name":"Attack Surface Scan", "page":"Attack Surface"},
 }
 
 

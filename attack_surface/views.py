@@ -1097,7 +1097,7 @@ class AttackSurfaceAPI(APIView):
                 all_tasks_done = all(task in completed_tasks for task in required_tasks)
                 
                 if existing_scan.status == "pending" or (domain, scan_type) in active_threads:
-                    logger.info(f"Scan pending for {domain} ({scan_type}) - Status 202 - Progress: {existing_scan.progress}")
+                    logger.info(f"Scan pending for {domain} ({scan_type}) - Status 202 ")
                     print(f"[+] Returning pending scan status for {domain} ({scan_type})")
                     return Response({
                         "message": "Scan in progress",
