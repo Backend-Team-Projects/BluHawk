@@ -78,6 +78,12 @@ class Scanlog(models.Model):
     role = models.CharField(max_length=50, default='none')
     timestamp = models.DateTimeField(auto_now_add=True)
     json_data = models.JSONField(null=True, blank=True)
+    compliance_mappings = models.JSONField(
+        null=True,
+        blank=True,
+        default=list,
+        help_text="List of compliance controls (e.g., PCI-DSS 8.2.3, ISO27001 A.12.4.1)"
+    )
 
     def __str__(self):
         return f"{self.user.email} - {self.timestamp}"

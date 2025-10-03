@@ -42,7 +42,7 @@ def normalize_datetime(dt):
         return dateutil.parser.isoparse(dt).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
     return dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
 
-
+@shared_task
 def refreshMitreData():
     try:
         url = 'https://attack-taxii.mitre.org/api/v21/collections'
@@ -194,6 +194,7 @@ def refreshMitreData():
         gc.collect()
         logger.info("Mitre data refresh completed.")
 
+@shared_task
 def send_batch_notifications(entity_ids):
     try:
         subscribers = Subscribers.objects.filter(entity_id__in=entity_ids)
@@ -268,6 +269,15 @@ def process_misp_entry(entry, entity_type):
         logger.error(f"Error processing entry {uuid}: {str(e)}")
         return False
 
+
+@shared_task
+def cisa_vulnerabilities_refresh():
+    # your code here
+    print("Refreshing CISA vulnerabilities...")
+
+
+    
+@shared_task
 def refresh_misp_data():
     results = {
         'processed': 0,

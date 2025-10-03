@@ -8,10 +8,27 @@ from django.utils.timezone import now
 from .models import OrganizationManagement, Scanlog, Organization
 from attack_surface.models import Notification
 from user_settings.models import UserProfile
-from BluHawk.config import view_display_pairs, role_based_views  # ✅ import here
+from BluHawk.config import view_display_pairs, role_based_views, COMPLIANCE_RULES  # ✅ import compliance rules
 from BluHawk.utils import *
 
 logger = logging.getLogger(__name__)
+
+
+def auto_map_compliance(response_json):
+    """Automatically map JSON keys to compliance standards from COMPLIANCE_RULES."""
+    mapped = set()
+    if isinstance(response_json, dict):
+        for key, value in response_json.items():
+            if key in COMPLIANCE_RULES:
+                mapped.update(COMPLIANCE_RULES[key])
+            # Recurse into nested dictionaries
+            if isinstance(value, dict):
+                mapped.update(auto_map_compliance(value))
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        mapped.update(auto_map_compliance(item))
+    return list(mapped)
 
 
 class OrganizationContextMiddleware:
@@ -108,16 +125,19 @@ class OrganizationContextMiddleware:
                     else:
                         json_data = {"note": "No JSON content in response"}
 
+                    # --- AUTO MAP COMPLIANCE ---
+                    compliance_mappings = auto_map_compliance(json_data)
+
                     # --- CREATE NOTIFICATION BEFORE SAVING SCANLOG ---
-                    # Notification.objects.create(
-                    #     email=request.user.email,
-                    #     heading=f"Scan Completed: {scan_name}",
-                    #     message=f"Your scan '{scan_name}' was completed successfully.",
-                    #     actionable=False,
-                    #     json_data=json_data,
-                    #     type='Scan Completed',
-                    #     organization_id=str(organization.id).replace('-', ''),
-                    # )
+                    Notification.objects.create(
+                        email=request.user.email,
+                        heading=f"Scan Completed: {scan_name}",
+                        message=f"Your scan '{scan_name}' was completed successfully.",
+                        actionable=False,
+                        json_data=json_data,
+                        type='Scan Completed',
+                        organization_id=str(organization.id).replace('-', ''),
+                    )
 
                     # --- SAVE SCANLOG ---
                     Scanlog.objects.create(
@@ -128,7 +148,8 @@ class OrganizationContextMiddleware:
                         organization=organization,
                         role=role,
                         timestamp=now(),
-                        json_data=json_data
+                        json_data=json_data,
+                        compliance_mappings=compliance_mappings,  # ✅ store mapped compliance standards
                     )
 
                 except Exception as log_error:
