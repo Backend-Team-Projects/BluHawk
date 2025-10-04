@@ -1374,17 +1374,17 @@ class CheckUnseenNotificationsAPIView(APIView):
         try:
             email = request.user.email
 
-            # Fetch unseen notifications of type "Scan Completed"
+            # Fetch unseen notifications of type "Scan Completed", newest first
             scan_notifications = Notification.objects.filter(
                 email=email,
                 seen=False,
                 type__icontains="Scan Completed"
-            )
+            ).order_by("-created_at")
 
-            if scan_notifications.exists():
-                # Mark notifications as seen
-                scan_notifications.update(seen=True)
+            count = scan_notifications.count()
+            data = []
 
+            if count:
                 # Prepare data to return
                 data = [
                     {
@@ -1392,8 +1392,8 @@ class CheckUnseenNotificationsAPIView(APIView):
                         "heading": n.heading,
                         "message": n.message,
                         "type": n.type,
-                        "seen": True,  # already marked as seen
-                        "actionable": n.actionable,  # will be False
+                        "seen": True,  # Will be marked as seen
+                        "actionable": n.actionable,
                         "json_data": n.json_data,
                         "organization_id": n.organization_id,
                         "created_at": n.created_at
@@ -1401,16 +1401,16 @@ class CheckUnseenNotificationsAPIView(APIView):
                     for n in scan_notifications
                 ]
 
-                return Response({
-                    "notifications": data,
-                    "message": "Scan notifications fetched and marked as seen.",
-                    "count": scan_notifications.count()
-                }, status=200)
+                # Mark notifications as seen
+                scan_notifications.update(seen=True)
 
-            # If no matching notifications
+            # Fetch total unseen count for other notifications
             unseen_count = Notification.objects.filter(email=email, seen=False).count()
+
             return Response({
-                "notifications": [],
+                "notifications": data,
+                "message": "Scan notifications fetched and marked as seen." if count else "No scan notifications.",
+                "count": count,
                 "unseen_count": unseen_count
             }, status=200)
 
