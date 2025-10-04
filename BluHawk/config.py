@@ -155,3 +155,18 @@ role_based_views = {
         "get_report",
     ]
 }
+
+COMPLIANCE_RULES = {
+    "phone_number": ["GDPR Article 5", "India PDPB - Personal data handling"],
+    "email": ["GDPR Article 5", "ISO27001 A.9.2"],
+    "name": ["GDPR Article 5"],
+    "region": ["GDPR Article 5"],
+    "country": ["GDPR Article 5"],
+    "ip_address": ["GDPR Article 5", "ISO27001 A.12.4.1"],
+    "os_version": ["ISO27001 A.12.4.1", "NIST 800-53 AU-2"],
+    "installed_packages": ["ISO27001 A.12.4.1"],
+    "config_files": ["ISO27001 A.12.4.1"],
+    "credit_card": ["PCI-DSS 3.2.1", "PCI-DSS 8.2.3"],
+    "bank_account": ["PCI-DSS 3.2.1"],
+    "json_data": ["ISO27001 A.12.4.1", "NIST 800-53 AU-2"]
+}
