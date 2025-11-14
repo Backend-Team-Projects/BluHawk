@@ -94,3 +94,14 @@ sublist3r
 # source venv/bin/activate
 
 
+            #important commands for backup and log retection using the celery and restic
+
+# kill -9 $(lsof -t -i:8000)
+
+# celery -A your_project worker -l info
+
+# celery -A your_project beat  -l info
+
+# sudo apt install restic
+
+

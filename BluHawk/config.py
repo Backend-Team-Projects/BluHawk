@@ -157,6 +157,7 @@ role_based_views = {
 }
 
 COMPLIANCE_RULES = {
+    # Direct key mappings
     "phone_number": ["GDPR Article 5", "India PDPB - Personal data handling"],
     "email": ["GDPR Article 5", "ISO27001 A.9.2"],
     "name": ["GDPR Article 5"],
@@ -168,5 +169,14 @@ COMPLIANCE_RULES = {
     "config_files": ["ISO27001 A.12.4.1"],
     "credit_card": ["PCI-DSS 3.2.1", "PCI-DSS 8.2.3"],
     "bank_account": ["PCI-DSS 3.2.1"],
-    "json_data": ["ISO27001 A.12.4.1", "NIST 800-53 AU-2"]
+    "json_data": ["ISO27001 A.12.4.1", "NIST 800-53 AU-2"],
+
+    # Regex-based value mappings
+    "regex:\\b\\d{4}-\\d{2}-\\d{2}\\b": ["ISO27001 A.12.4.1"],  # Date (YYYY-MM-DD)
+    "regex:^\\d{14}$": ["ISO27001 A.12.4.1"],                  # Timestamps like 20180914184412
+    "regex:^[\\w\\.-]+@[\\w\\.-]+$": ["GDPR Article 5", "ISO27001 A.9.2"],  # Email
+    "regex:^https?://": ["ISO27001 A.12.4.1"],                 # URLs
+    "regex:^[a-zA-Z0-9.-]+\\.[a-z]{2,}$": ["GDPR Article 5"],  # Domain names
+    "regex:^\\d{16}$": ["PCI-DSS 3.2.1"],                      # Credit card (basic)
+    "regex:^\\d{1,3}(\\.\\d{1,3}){3}$": ["GDPR Article 5", "ISO27001 A.12.4.1"], # IP Address
 }

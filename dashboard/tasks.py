@@ -1,6 +1,7 @@
 from celery import shared_task
 import logging
 from dashboard.models import MitreAttackEntity as mit_entity, MitreEntityRelation as relation,  Subscribers, Misp
+from dashboard.cve_data import download_and_process_cve_feeds
 import traceback
 import gc
 from datetime import datetime, timezone
@@ -322,3 +323,9 @@ def refresh_misp_data():
     results['status'] = 'success' if results['errors'] == 0 else 'partial'
     gc.collect()
     return results
+
+@shared_task
+def cve_refresh_task():
+    print("Running CVE feed refresh...")
+    download_and_process_cve_feeds()
+    print("CVE refresh completed.")
