@@ -10,17 +10,36 @@ from attack_surface.models import Notification
 from user_settings.models import UserProfile
 from BluHawk.config import view_display_pairs, role_based_views, COMPLIANCE_RULES  # ✅ import compliance rules
 from BluHawk.utils import *
+import re
 
 logger = logging.getLogger(__name__)
 
 
 def auto_map_compliance(response_json):
-    """Automatically map JSON keys to compliance standards from COMPLIANCE_RULES."""
+    """
+    Map JSON keys and values to compliance standards using COMPLIANCE_RULES.
+    Handles direct key mapping and regex-based value patterns.
+    """
     mapped = set()
+
+    def match_value_regex(value):
+        """Check regex-based rules for a single value."""
+        if not isinstance(value, str):
+            return set()
+        matched = set()
+        for rule_key, standards in COMPLIANCE_RULES.items():
+            if rule_key.startswith("regex:"):
+                pattern = rule_key[len("regex:"):]
+                if re.match(pattern, value):
+                    matched.update(standards)
+        return matched
+
     if isinstance(response_json, dict):
         for key, value in response_json.items():
+            # Direct key mapping
             if key in COMPLIANCE_RULES:
                 mapped.update(COMPLIANCE_RULES[key])
+
             # Recurse into nested dictionaries
             if isinstance(value, dict):
                 mapped.update(auto_map_compliance(value))
@@ -28,6 +47,18 @@ def auto_map_compliance(response_json):
                 for item in value:
                     if isinstance(item, dict):
                         mapped.update(auto_map_compliance(item))
+                    else:
+                        mapped.update(match_value_regex(item))
+            else:
+                mapped.update(match_value_regex(value))
+
+    elif isinstance(response_json, list):
+        for item in response_json:
+            if isinstance(item, dict):
+                mapped.update(auto_map_compliance(item))
+            else:
+                mapped.update(match_value_regex(item))
+
     return list(mapped)
 
 

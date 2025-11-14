@@ -22,3 +22,5 @@ MORALIS = os.getenv('MORALIS')
 DB_PORT = os.getenv("DB_PORT", '5432')
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+PGPASSWORD = os.getenv("POSTGRESQL_PASSWORD")
