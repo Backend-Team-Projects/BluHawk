@@ -212,7 +212,6 @@
 #                 except Exception as e:
 #                     print(f"Batch insert failed for CPEs in {feed}: {e}")
 
-
 import os
 import requests
 import zipfile
@@ -220,8 +219,9 @@ import json
 from datetime import datetime
 from urllib.parse import unquote
 from django.utils.dateparse import parse_datetime
-from dashboard.models import CveNvd, CPE
+from dashboard.models import CveNvd, CPE, CVE
 from django.db import transaction
+
 
 def extract_cpes_from_config(node):
     cpes = []
@@ -232,6 +232,7 @@ def extract_cpes_from_config(node):
             cpes.extend(extract_cpes_from_config(child))
     return cpes
 
+
 def parse_vendor_product(cpe23uri):
     parts = cpe23uri.split(':')
     if len(parts) >= 5:
@@ -239,6 +240,7 @@ def parse_vendor_product(cpe23uri):
         product = unquote(parts[4])
         return vendor, product
     return "", ""
+
 
 def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feeds"):
     base_url = "https://nvd.nist.gov/feeds/json/cve/1.1"
@@ -253,6 +255,7 @@ def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feed
         file_path = os.path.join(download_dir, feed)
         url = f"{base_url}/{feed}"
 
+        # Download feed
         if not os.path.exists(file_path):
             print(f"Downloading {feed}...")
             response = requests.get(url)
@@ -267,6 +270,8 @@ def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feed
                 data = json.load(json_file)
                 cve_items = data.get('CVE_Items', [])
 
+                # Prepare batches
+                cvenvd_batch = []
                 cve_batch = []
                 cpe_batch = []
                 cpe_seen = set()
@@ -274,14 +279,15 @@ def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feed
 
                 for item in cve_items:
                     try:
-                        # CVE Fields
+                        # Extract CVE fields
                         cve_id = item['cve']['CVE_data_meta']['ID']
                         cve_type = item['cve'].get('data_type', 'CVE')
                         cve_name = cve_id
                         published = parse_datetime(item.get('publishedDate'))
                         modified = parse_datetime(item.get('lastModifiedDate'))
 
-                        cve_batch.append(CveNvd(
+                        # Insert into CveNvd model
+                        cvenvd_batch.append(CveNvd(
                             id=cve_id,
                             type=cve_type,
                             name=cve_name,
@@ -290,46 +296,75 @@ def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feed
                             json_data=item
                         ))
 
-                        # CPE Extraction
+                        # Insert into CVE model
+                        cve_batch.append(CVE(
+                            id=cve_id,
+                            type=cve_type,
+                            name=cve_name,
+                            created=published,
+                            modified=modified,
+                            json_data=item
+                        ))
+
+                        # Extract CPEs
                         configurations = item.get('configurations', {}).get('nodes', [])
                         for node in configurations:
                             cpe_matches = extract_cpes_from_config(node)
                             for cpe in cpe_matches:
-                                if cpe.get("vulnerable", False):
-                                    cpe23uri = cpe.get("cpe23Uri")
-                                    if not cpe23uri:
-                                        continue
-                                    vendor, product = parse_vendor_product(cpe23uri)
+                                if not cpe.get("vulnerable", False):
+                                    continue
 
-                                    if cpe23uri not in cpe_seen:
-                                        cpe_seen.add(cpe23uri)
-                                        cpe_batch.append(CPE(
-                                            id=cpe23uri,
-                                            name=cpe23uri,
-                                            vendor=vendor,
-                                            product=product
-                                        ))
+                                cpe23uri = cpe.get("cpe23Uri")
+                                if not cpe23uri:
+                                    continue
 
-                                    cpe_cve_links.append((cpe23uri, cve_id))
+                                vendor, product = parse_vendor_product(cpe23uri)
+
+                                # Insert only once per CPE
+                                if cpe23uri not in cpe_seen:
+                                    cpe_seen.add(cpe23uri)
+                                    cpe_batch.append(CPE(
+                                        id=cpe23uri,
+                                        name=cpe23uri,
+                                        vendor=vendor,
+                                        product=product
+                                    ))
+
+                                # Track relation
+                                cpe_cve_links.append((cpe23uri, cve_id))
 
                     except Exception as e:
                         print(f"Skipping CVE due to error: {e}")
 
-                # Insert CVEs
+                # 1️⃣ Insert CVE into CveNvd
                 try:
                     with transaction.atomic():
                         CveNvd.objects.bulk_create(
+                            cvenvd_batch,
+                            batch_size=500,
+                            update_conflicts=True,
+                            update_fields=["type", "name", "created", "modified", "json_data", "updated_at"],
+                            unique_fields=["id"]
+                        )
+                        print(f"Inserted/Updated {len(cvenvd_batch)} into CveNvd")
+                except Exception as e:
+                    print(f"Bulk insert failed for CveNvd: {e}")
+
+                # 2️⃣ Insert CVE into CVE model
+                try:
+                    with transaction.atomic():
+                        CVE.objects.bulk_create(
                             cve_batch,
                             batch_size=500,
                             update_conflicts=True,
                             update_fields=["type", "name", "created", "modified", "json_data", "updated_at"],
                             unique_fields=["id"]
                         )
-                        print(f"Inserted/Updated {len(cve_batch)} CVEs from {feed}")
+                        print(f"Inserted/Updated {len(cve_batch)} into CVE model")
                 except Exception as e:
-                    print(f"Batch insert failed for CVEs in {feed}: {e}")
+                    print(f"Bulk insert failed for CVE model: {e}")
 
-                # Insert CPEs
+                # 3️⃣ Insert CPEs
                 try:
                     with transaction.atomic():
                         CPE.objects.bulk_create(
@@ -337,15 +372,16 @@ def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feed
                             batch_size=500,
                             ignore_conflicts=True
                         )
-                        print(f"Inserted {len(cpe_batch)} new CPEs from {feed}")
+                        print(f"Inserted {len(cpe_batch)} CPEs total")
                 except Exception as e:
-                    print(f"Batch insert failed for CPEs in {feed}: {e}")
+                    print(f"Bulk insert failed for CPEs: {e}")
 
-                # Insert CPE-CVE Links
+                # 4️⃣ Insert CPE ↔ CVE Links
                 try:
                     through_model = CPE.cve_ids.through
-                    existing_cpes = {c.id: c for c in CPE.objects.filter(id__in={cid for cid, _ in cpe_cve_links})}
-                    existing_cves = {c.id: c for c in CveNvd.objects.filter(id__in={cid for _, cid in cpe_cve_links})}
+
+                    existing_cpes = {c.id for c in CPE.objects.filter(id__in=[cid for cid, _ in cpe_cve_links])}
+                    existing_cves = {c.id for c in CveNvd.objects.filter(id__in=[cid for _, cid in cpe_cve_links])}
 
                     through_batch = [
                         through_model(cpe_id=cpe_id, cvenvd_id=cve_id)
@@ -359,6 +395,6 @@ def download_and_process_cve_feeds(years: int = 1, download_dir: str = "cve_feed
                             batch_size=500,
                             ignore_conflicts=True
                         )
-                        print(f"Inserted {len(through_batch)} CPE-CVE links for {feed}")
+                        print(f"Inserted {len(through_batch)} CVE-CPE relations")
                 except Exception as e:
-                    print(f"Batch insert failed for CPE-CVE links in {feed}: {e}")
+                    print(f"Bulk insert failed for CPE-CVE links: {e}")

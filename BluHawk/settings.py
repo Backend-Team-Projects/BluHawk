@@ -194,11 +194,16 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(minute='*/5'),
         'args': (),
     },
-    'cleanup_scanlogs_daily': {
-        'task': 'scanlogs.tasks.cleanup_scanlogs',
-        'schedule': crontab(hour=0, minute=0),  # Runs daily at midnight
-        'args': (),  # No arguments needed
+    # 'cleanup_scanlogs_daily': {
+    #     'task': 'scanlogs.tasks.cleanup_scanlogs',
+    #     'schedule': crontab(hour=0, minute=0),  # Runs daily at midnight
+    #     'args': (),  # No arguments needed
+    # },
+    'cve_refresh': {
+    'task': 'dashboard.tasks.cve_refresh_task',
+    'schedule': crontab(hour=3, minute=0),  # Runs daily at 3 AM
     },
+
 }
 
 import os
