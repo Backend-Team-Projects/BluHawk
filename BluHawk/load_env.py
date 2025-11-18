@@ -15,7 +15,8 @@ SHODAN_API = os.getenv('SHODAN_API')
 AlienVault_API = os.getenv('AlienVault_API')
 EXA_API = os.getenv('EXA_API')
 
-site_domain = "https://bluhawkscan.com/"
+# site_domain = "https://bluhawkscan.com/"
+site_domain = "https://localhost:3001/"
 TIRRENO_URL = "https://admin.bluhawkscan.com/"
 TIRRENO_API = os.getenv('TIRRENO_API')
 MORALIS = os.getenv('MORALIS')
