@@ -28,3 +28,22 @@ class UserSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.user.username}" if self.user else "No User Settings"
+    
+
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from session_management.models import Profile
+
+@receiver(post_save, sender=User)
+def create_all_user_profiles(sender, instance, created, **kwargs):
+    if created:
+
+        # Main user profile
+        UserProfile.objects.get_or_create(user=instance)
+
+        # Settings profile
+        UserSettings.objects.get_or_create(user=instance)
+
+        # Password-reset profile (your Profile model)
+        Profile.objects.get_or_create(user=instance)

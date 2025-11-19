@@ -39,12 +39,12 @@ class CveNvd(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 class CPE(models.Model):
-    id = models.CharField(max_length=100, primary_key=True)
+    id = models.CharField(max_length=500, primary_key=True)
     type = models.CharField(max_length=50, default="CPE")
-    name = models.CharField(max_length=255, db_index=True)
+    name = models.CharField(max_length=500, db_index=True)
     created = models.DateTimeField(auto_now_add=True)
-    vendor = models.CharField(max_length=100, db_index=True)
-    product = models.CharField(max_length=100, db_index=True)
+    vendor = models.CharField(max_length=200, db_index=True)
+    product = models.CharField(max_length=200, db_index=True)
     cve_ids = models.ManyToManyField('dashboard.CveNvd', related_name='cpe_entries')
 
 

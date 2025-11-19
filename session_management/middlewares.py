@@ -5,10 +5,10 @@ import uuid
 from django.http import JsonResponse
 from django.urls import resolve, Resolver404
 from django.utils.timezone import now
-from .models import OrganizationManagement, Scanlog, Organization
+from .models import OrganizationManagement, Scanlog
 from attack_surface.models import Notification
 from user_settings.models import UserProfile
-from BluHawk.config import view_display_pairs, role_based_views, COMPLIANCE_RULES  # ✅ import compliance rules
+from BluHawk.config import view_display_pairs, role_based_views, COMPLIANCE_RULES
 from BluHawk.utils import *
 import re
 
@@ -16,14 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 def auto_map_compliance(response_json):
-    """
-    Map JSON keys and values to compliance standards using COMPLIANCE_RULES.
-    Handles direct key mapping and regex-based value patterns.
-    """
     mapped = set()
 
     def match_value_regex(value):
-        """Check regex-based rules for a single value."""
         if not isinstance(value, str):
             return set()
         matched = set()
@@ -36,11 +31,9 @@ def auto_map_compliance(response_json):
 
     if isinstance(response_json, dict):
         for key, value in response_json.items():
-            # Direct key mapping
             if key in COMPLIANCE_RULES:
                 mapped.update(COMPLIANCE_RULES[key])
 
-            # Recurse into nested dictionaries
             if isinstance(value, dict):
                 mapped.update(auto_map_compliance(value))
             elif isinstance(value, list):
@@ -69,11 +62,11 @@ class OrganizationContextMiddleware:
         self.included_views = list(view_display_pairs.keys())
 
     def __call__(self, request):
+
         if not request.user.is_authenticated:
             return self.get_response(request)
 
         try:
-            # Resolve view name
             try:
                 resolved = resolve(request.path_info)
                 current_view = resolved.url_name
@@ -83,24 +76,58 @@ class OrganizationContextMiddleware:
             if current_view not in self.included_views:
                 return self.get_response(request)
 
-            # Fetch user memberships
-            memberships = OrganizationManagement.objects.filter(user=request.user).select_related('organization')
-            if not memberships:
-                logger.warning(f"User {request.user.email} has no organization memberships")
-                return JsonResponse({'message': 'You are not associated with any organization.'}, status=403)
+            # ---------------------------------------------------
+            # 1️⃣ CHECK USER ORGANIZATION MEMBERSHIP
+            # ---------------------------------------------------
+            memberships = OrganizationManagement.objects.filter(
+                user=request.user
+            ).select_related('organization')
 
-            org_roles = {str(m.organization.id).replace('-', ''): m.role for m in memberships}
-            organizations = [
+            user_has_org = memberships.exists()
+
+            # ---------------------------------------------------
+            # CASE A: USER HAS **NO ORGANIZATION** → AUTO-VIEWER
+            # ---------------------------------------------------
+            if not user_has_org:
+                logger.warning(f"User {request.user.email} has no organization memberships")
+
+                active_org = None
+                active_role = "viewer"
+
+                # allow scan to proceed without org
+                response = self.get_response(request)
+
+                # log scan as viewer with no org
+                self._log_scan(
+                    request,
+                    response,
+                    current_view,
+                    organization=None,
+                    role="viewer"
+                )
+
+                return response
+
+            # ---------------------------------------------------
+            # CASE B: USER HAS ORGANIZATIONS → OLD LOGIC APPLIES
+            # ---------------------------------------------------
+
+            # collect orgs + roles
+            request.user_organizations = [
                 {
                     'id': str(m.organization.id).replace('-', ''),
                     'name': m.organization.name,
                     'role': m.role
-                } for m in memberships
+                }
+                for m in memberships
             ]
-            request.user_organizations = organizations
-            request.user_org_roles = org_roles
 
-            # --- NEW CHECK 1: Ensure active organization exists ---
+            request.user_org_roles = {
+                str(m.organization.id).replace('-', ''): m.role
+                for m in memberships
+            }
+
+            # ACTIVE ORG CHECK
             try:
                 profile = UserProfile.objects.get(user=request.user)
                 active_org = profile.active_organization
@@ -108,88 +135,88 @@ class OrganizationContextMiddleware:
                 active_org = None
 
             if not active_org:
-                return JsonResponse({'message': 'Please set an active organization before running this scan.'}, status=403)
+                return JsonResponse(
+                    {'message': 'Please set an active organization before running this scan.'},
+                    status=403
+                )
 
-            # --- NEW CHECK 2: Ensure current view is allowed for active role ---
             membership = OrganizationManagement.objects.filter(
                 user=request.user, organization=active_org
             ).first()
+
             active_role = membership.role if membership else None
 
+            # ROLE PERMISSION CHECK
             if not active_role or current_view not in role_based_views.get(active_role, []):
                 return JsonResponse({'message': 'You are not allowed to access this scan.'}, status=403)
 
-            # Proceed with the request
+            # RUN VIEW
             response = self.get_response(request)
 
-            # Log Scan in background
-            def log_thread():
-                try:
-                    if response.status_code != 200:
-                        return  # Only log successful responses
+            # LOG FOR ORG USERS
+            self._log_scan(
+                request,
+                response,
+                current_view,
+                organization=active_org,
+                role=active_role
+            )
 
-                    scan_name = self.view_display_names.get(current_view, current_view)
-
-                    # Fetch active organization again for logging
-                    try:
-                        profile = UserProfile.objects.get(user=request.user)
-                        organization = profile.active_organization
-                    except UserProfile.DoesNotExist:
-                        organization = None
-
-                    if not organization:
-                        logger.warning(f"User {request.user.email} has no active organization set")
-                        return
-
-                    # Fetch role for this organization
-                    membership = OrganizationManagement.objects.filter(
-                        user=request.user, organization=organization
-                    ).first()
-                    role = membership.role if membership else "none"
-
-                    # Prepare JSON data
-                    if hasattr(response, 'content') and response.get('Content-Type', '').startswith('application/json'):
-                        try:
-                            json_data = json.loads(response.content.decode('utf-8', errors='ignore'))
-                        except json.JSONDecodeError:
-                            json_data = {"error": "Failed to decode JSON response"}
-                    else:
-                        json_data = {"note": "No JSON content in response"}
-
-                    # --- AUTO MAP COMPLIANCE ---
-                    compliance_mappings = auto_map_compliance(json_data)
-
-                    # --- CREATE NOTIFICATION BEFORE SAVING SCANLOG ---
-                    Notification.objects.create(
-                        email=request.user.email,
-                        heading=f"Scan Completed: {scan_name}",
-                        message=f"Your scan '{scan_name}' was completed successfully.",
-                        actionable=False,
-                        json_data=json_data,
-                        type='Scan Completed',
-                        organization_id=str(organization.id).replace('-', ''),
-                    )
-
-                    # --- SAVE SCANLOG ---
-                    Scanlog.objects.create(
-                        user=request.user,
-                        scan_name=scan_name,
-                        group='organization',
-                        status_code=response.status_code,
-                        organization=organization,
-                        role=role,
-                        timestamp=now(),
-                        json_data=json_data,
-                        compliance_mappings=compliance_mappings,  # ✅ store mapped compliance standards
-                    )
-
-                except Exception as log_error:
-                    logger.error(f"Failed to log Scanlog/Notification: {str(log_error)}", exc_info=True)
-
-            threading.Thread(target=log_thread).start()
             return response
 
         except Exception as e:
             log_exception(e)
             logger.error(f"Error in OrganizationContextMiddleware: {str(e)}", exc_info=True)
-            return JsonResponse({'message': 'An error occurred while processing organization context.'}, status=500)
+            return JsonResponse(
+                {'message': 'An error occurred while processing organization context.'},
+                status=500
+            )
+
+    # ---------------------------------------------------------
+    # BACKGROUND LOGGING FUNCTION
+    # ---------------------------------------------------------
+    def _log_scan(self, request, response, current_view, organization, role):
+        def log_thread():
+            try:
+                if response.status_code != 200:
+                    return
+
+                scan_name = self.view_display_names.get(current_view, current_view)
+
+                # JSON parsing
+                if hasattr(response, 'content') and response.get('Content-Type', '').startswith('application/json'):
+                    try:
+                        json_data = json.loads(response.content.decode('utf-8', errors='ignore'))
+                    except json.JSONDecodeError:
+                        json_data = {"error": "Failed to decode JSON response"}
+                else:
+                    json_data = {"note": "No JSON content in response"}
+
+                compliance_mappings = auto_map_compliance(json_data)
+
+                Notification.objects.create(
+                    email=request.user.email,
+                    heading=f"Scan Completed: {scan_name}",
+                    message=f"Your scan '{scan_name}' was completed successfully.",
+                    actionable=False,
+                    json_data=json_data,
+                    type='Scan Completed',
+                    organization_id=str(organization.id).replace('-', '') if organization else None,
+                )
+
+                Scanlog.objects.create(
+                    user=request.user,
+                    scan_name=scan_name,
+                    group='organization' if organization else 'none',
+                    status_code=response.status_code,
+                    organization=organization,
+                    role=role,
+                    timestamp=now(),
+                    json_data=json_data,
+                    compliance_mappings=compliance_mappings,
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to log Scanlog/Notification: {str(e)}", exc_info=True)
+
+        threading.Thread(target=log_thread).start()
