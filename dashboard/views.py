@@ -979,6 +979,21 @@ STATUS_NOT_FOUND = 404
 STATUS_TIMEOUT = 408
 STATUS_SERVICE_UNAVAILABLE = 503
 
+# prefer centralized fetcher from attack_surface; otherwise read cache model directly
+try:
+    from attack_surface.vulnerability_description import fetch_port_description
+except Exception as _e:
+    fetch_port_description = None
+    logger.debug("attack_surface.vulnerability_description.fetch_port_description not available: %s", _e)
+
+# Try to import PortDescription model from attack_surface for direct cache reads
+try:
+    from attack_surface.models import PortDescription as AS_PortDescription
+except Exception as _e:
+    AS_PortDescription = None
+    logger.debug("attack_surface.models.PortDescription not available: %s", _e)
+
+
 class FindIntelFullScan(APIView):
     permission_classes = [IsAuthenticated]
     FORCE_RESCAN_CODES = [STATUS_BAD_REQUEST, STATUS_FORBIDDEN, STATUS_NOT_FOUND, STATUS_TIMEOUT, STATUS_SERVICE_UNAVAILABLE]
@@ -1319,17 +1334,59 @@ class FindIntelFullScan(APIView):
             ip = socket.gethostbyname(hostname)
             self.save_partial_result(query, {"status": "processing"}, "open_ports", STATUS_PROCESSING, search_type)
 
+            # 1) Try Shodan first (if configured)
             if SHODAN_API_KEY:
                 try:
                     import shodan
                     api = shodan.Shodan(SHODAN_API_KEY)
                     host = api.host(ip)
                     ports = host.get("ports", [])
-                    self.save_partial_result(query, {"ports": ports}, "open_ports", STATUS_COMPLETED, search_type)
+                    # normalize ports to ints (filter non-numeric)
+                    ports = [int(p) for p in ports if str(p).isdigit()]
+                    # fetch descriptions using attack_surface fetcher or cached model
+                    descriptions = {}
+                    for p in ports:
+                        try:
+                            desc = ""
+                            # Prefer fetcher from attack_surface (handles cache + Gemini)
+                            if fetch_port_description:
+                                try:
+                                    res = fetch_port_description(int(p))
+                                    if isinstance(res, dict):
+                                        # your fetcher returns {status, data, message} or similar
+                                        desc = res.get("data") or res.get("description") or res.get("text") or ""
+                                    else:
+                                        desc = str(res)
+                                except Exception as e:
+                                    logger.debug("attack_surface.fetch_port_description failed for %s: %s", p, e)
+                                    desc = ""
+                            # If fetcher missing or returned nothing, try to read cache model directly
+                            if not desc and AS_PortDescription:
+                                try:
+                                    obj = AS_PortDescription.objects.filter(port=str(p)).first()
+                                    if obj and getattr(obj, "description", None):
+                                        # saved as JSON field; normalize to string where applicable
+                                        d = obj.description
+                                        if isinstance(d, dict):
+                                            # try common keys
+                                            desc = d.get("description") or d.get("text") or json.dumps(d)
+                                        else:
+                                            desc = str(d)
+                                except Exception as e:
+                                    logger.debug("Direct PortDescription read failed for %s: %s", p, e)
+                                    desc = ""
+                            if isinstance(desc, dict):
+                                desc = desc.get("description") or desc.get("text") or str(desc)
+                            descriptions[str(p)] = (str(desc) or "").strip()
+                        except Exception as e:
+                            logger.exception("Port description fetch error (shodan) for %s: %s", p, e)
+                            descriptions[str(p)] = ""
+                    self.save_partial_result(query, {"ports": ports, "descriptions": descriptions}, "open_ports", STATUS_COMPLETED, search_type)
                     return
                 except Exception as shodan_error:
-                    logger.warning(f"Shodan scan failed for {ip}: {shodan_error}. Falling back to socket scan.")
+                    logger.warning("Shodan scan failed for %s: %s. Falling back to socket scan.", ip, shodan_error)
 
+            # 2) Socket scan fallback (COMMON_TCP_PORTS)
             open_ports = []
             lock = threading.Lock()
 
@@ -1343,26 +1400,66 @@ class FindIntelFullScan(APIView):
                 except socket.timeout:
                     pass
                 except Exception as e:
-                    logger.debug(f"Port scan failed for port {port} on {ip}: {str(e)}")
+                    logger.debug("Port scan failed for port %s on %s: %s", port, ip, str(e))
                     log_exception(e)
 
             threads = []
             for port in COMMON_TCP_PORTS:
-                t = threading.Thread(target=scan_port, args=(port,))
-                threads.append(t)
-                t.start()
+                try:
+                    t = threading.Thread(target=scan_port, args=(port,))
+                    threads.append(t)
+                    t.start()
+                except Exception as e:
+                    logger.debug("Failed to start thread for port %s: %s", port, e)
 
             for t in threads:
                 t.join()
 
             open_ports.sort()
-            self.save_partial_result(query, {"ports": open_ports}, "open_ports", STATUS_COMPLETED, search_type)
+
+            # 3) For discovered open_ports, fetch descriptions (centralized attack_surface preferred)
+            descriptions = {}
+            for p in open_ports:
+                try:
+                    desc = ""
+                    if fetch_port_description:
+                        try:
+                            res = fetch_port_description(int(p))
+                            if isinstance(res, dict):
+                                desc = res.get("data") or res.get("description") or res.get("text") or ""
+                            else:
+                                desc = str(res)
+                        except Exception as e:
+                            logger.debug("attack_surface.fetch_port_description failed for %s: %s", p, e)
+                            desc = ""
+                    # fallback to reading cache model directly if fetcher not available or empty
+                    if not desc and AS_PortDescription:
+                        try:
+                            obj = AS_PortDescription.objects.filter(port=str(p)).first()
+                            if obj and getattr(obj, "description", None):
+                                d = obj.description
+                                if isinstance(d, dict):
+                                    desc = d.get("description") or d.get("text") or json.dumps(d)
+                                else:
+                                    desc = str(d)
+                        except Exception as e:
+                            logger.debug("Direct PortDescription read failed for %s: %s", p, e)
+                            desc = ""
+                    if isinstance(desc, dict):
+                        desc = desc.get("description") or desc.get("text") or str(desc)
+                    descriptions[str(p)] = (str(desc) or "").strip()
+                except Exception as e:
+                    logger.exception("Port description fetch error for %s: %s", p, e)
+                    descriptions[str(p)] = ""
+
+            # 4) Save ports + descriptions to partial result
+            self.save_partial_result(query, {"ports": open_ports, "descriptions": descriptions}, "open_ports", STATUS_COMPLETED, search_type)
 
         except socket.gaierror:
-            logger.error(f"Failed to resolve hostname {hostname} for query {query}")
+            logger.error("Failed to resolve hostname %s for query %s", hostname, query)
             self.save_partial_result(query, {}, "open_ports", STATUS_BAD_REQUEST, search_type)
         except Exception as e:
-            logger.error(f"Port scan failed for query {query}: {str(e)}")
+            logger.error("Port scan failed for query %s: %s", query, str(e))
             self.save_partial_result(query, {}, "open_ports", STATUS_BAD_REQUEST, search_type)
             log_exception(e)
 
