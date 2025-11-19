@@ -60,7 +60,6 @@ TRACKED_ENDPOINTS_NAMES = {
     "cpe_search":{"name":"Vendor and Product Details", "page":"My Intel"},
     "my_intel_search":{"name":"My Intel Searches", "page":"My Intel"},
     "graph-search":{"name":"Threat Graph Explorer", "page":"VT Graph Search"},
-    "get_report":{"name":"File Analysis Report", "page":"File Analysis"},
 }
 
 
@@ -131,7 +130,14 @@ COMMON_TCP_PORTS = [
 
 
 role_based_views = {
-    "admin": [
+    "admin": [ ],
+
+    "analyst": [
+        "attack-surface-scan",
+        "find_intel_full_scan",
+    ],
+
+    "viewer": [
         "attack-surface-scan",
         "get_username",
         "get_deep_account",
@@ -146,39 +152,10 @@ role_based_views = {
         "subdomain_search",
         "get_report",
         "find_intel_full_scan",
-        "my_intel_search",
-        "cpe_search",
-        "upload-file", 
-        'graph-search',
-        'get_report',
-    ],
-    "analyst": [
-        "get_username",
-        "get_deep_account",
-        "get_wayback",
-        "get_ssl_info",
-        "get_nrich",
-        "wallet",
-        "wallet-history",
-        "nftswallet-history",
-        "wapiti_scan",
-        "port_scan",
-        "subdomain_search",
-        "get_report",
-        "my_intel_search",
-        "cpe_search",
-        "upload-file", 
-        'graph-search',
-        'get_report',
-    ],
-    "viewer": [
-        "my_intel_search",
-        "cpe_search",
-        "upload-file",
-        'get_report',
-    
+        "graph-search",
     ]
 }
+
 
 COMPLIANCE_RULES = {
     # Direct key mappings
