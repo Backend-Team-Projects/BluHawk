@@ -149,7 +149,6 @@ role_based_views = {
         "wapiti_scan",
         "port_scan",
         "subdomain_search",
-        "get_report",
         "find_intel_full_scan",
         "graph-search",
     ]
