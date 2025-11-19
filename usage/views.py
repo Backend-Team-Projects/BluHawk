@@ -303,8 +303,16 @@ class GetUsageStats(APIView):
 from session_management.models import Scanlog
 from session_management.models import OrganizationManagement
 from django.db.models import Q
-from django.core.paginator import Paginator
 from uuid import UUID
+from datetime import timedelta
+from django.core.paginator import Paginator
+from django.utils.timezone import now
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework.response import Response
+
+from BluHawk.utils import log_exception
+
 
 class GetPaginatedScanLogs(APIView):
     permission_classes = [IsAuthenticated]
@@ -337,14 +345,77 @@ class GetPaginatedScanLogs(APIView):
                 return Response({"error": "Invalid pagination parameters"}, status=400)
 
             # --- Build roles_summary ---
-            memberships = OrganizationManagement.objects.filter(user=user)
+            memberships = OrganizationManagement.objects.filter(user=user).select_related("organization")
             roles_summary = {"admin": [], "analyst": [], "viewer": []}
             for m in memberships:
                 if m.role in roles_summary:
-                    roles_summary[m.role].append(
-                        {"org_id": str(m.organization.id), "org_name": m.organization.name}
-                    )
+                    roles_summary[m.role].append({
+                        "org_id": str(m.organization.id),
+                        "org_name": m.organization.name
+                    })
 
+            # ----------------------------------------------------------
+            # CASE 1: Viewer with NO ORGANIZATION → Auto-fetch own logs
+            # ----------------------------------------------------------
+            user_roles = {m.role for m in memberships}
+            only_viewer = bool(user_roles) and user_roles.issubset({"viewer"})
+            no_org_at_all = not memberships.exists()
+
+            if not org_id and only_viewer and no_org_at_all:
+                logs_qs = Scanlog.objects.filter(
+                    user=user,
+                    role='viewer'
+                ).values(
+                    "scan_name",
+                    "role",
+                    "status_code",
+                    "timestamp",
+                    "json_data",
+                    "organization_id",
+                    "user__id",
+                    "user__username",
+                    "user_userprofile_name",
+                )
+
+                # Apply time filters
+                if time_filter:
+                    now_time = now()
+                    if time_filter == "today":
+                        logs_qs = logs_qs.filter(timestamp__date=now_time.date())
+                    elif time_filter == "yesterday":
+                        logs_qs = logs_qs.filter(timestamp__date=now_time.date() - timedelta(days=1))
+                    elif time_filter == "this_week":
+                        start_of_week = now_time - timedelta(days=now_time.weekday())
+                        logs_qs = logs_qs.filter(timestamp__gte=start_of_week)
+                    elif time_filter == "this_month":
+                        logs_qs = logs_qs.filter(timestamp_year=now_time.year, timestamp_month=now_time.month)
+                    elif time_filter == "this_year":
+                        logs_qs = logs_qs.filter(timestamp__year=now_time.year)
+
+                # Ordering
+                ordering = order_by if order == "asc" else f"-{order_by}"
+                logs_qs = logs_qs.order_by(ordering)
+
+                # Pagination
+                paginator = Paginator(list(logs_qs), page_size)
+                page_obj = paginator.get_page(page)
+                logs_list = list(page_obj.object_list)
+
+                return Response({
+                    "roles_summary": roles_summary,
+                    "organization_selected": None,
+                    "role": "viewer",
+                    "members": [],
+                    "logs": logs_list,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": paginator.num_pages,
+                    "total_logs": paginator.count,
+                })
+
+            # ----------------------------------------------------------
+            # CASE 2: No org selected (Admin/Analyst old behavior)
+            # ----------------------------------------------------------
             if not org_id:
                 return Response({
                     "roles_summary": roles_summary,
@@ -358,9 +429,10 @@ class GetPaginatedScanLogs(APIView):
                     "total_logs": 0,
                 })
 
+            # ----------------------------------------------------------
+            # CASE 3: Org provided → Validate membership
+            # ----------------------------------------------------------
             normalized_org_id = self._normalize_org_id(org_id)
-
-            # --- Validate membership ---
             try:
                 membership = memberships.get(organization__id=normalized_org_id)
             except OrganizationManagement.DoesNotExist:
@@ -368,33 +440,58 @@ class GetPaginatedScanLogs(APIView):
 
             user_role = membership.role
 
-            # --- Query members & logs ---
+            # ----------------------------------------------------------
+            # CASE 4: Admin → See all member logs
+            # ----------------------------------------------------------
             if user_role == "admin":
                 members_qs = OrganizationManagement.objects.filter(
                     organization__id=normalized_org_id
-                )
-                members_list = [
-                    {
-                        "user_id": m.user.id,
-                        "org_id": m.organization.id,
-                        "username": m.user.username,
-                        "name": getattr(m.user.userprofile, 'name', None)
-                    }
-                    for m in members_qs
-                ]
+                ).select_related("user", "organization")
+
+                members_list = [{
+                    "user_id": m.user.id,
+                    "org_id": m.organization.id,
+                    "username": m.user.username,
+                    "name": getattr(m.user.userprofile, 'name', None)
+                } for m in members_qs]
+
                 user_ids_in_org = [m.user.id for m in members_qs]
 
-                # --- Directly serialize scan logs using values() ---
                 logs_qs = Scanlog.objects.filter(user_id__in=user_ids_in_org).values(
                     "scan_name",
                     "role",
+                    "status_code",
                     "timestamp",
                     "json_data",
                     "organization_id",
                     "user__id",
                     "user__username",
                     "user__userprofile__name"
+
                 )
+
+            # ----------------------------------------------------------
+            # CASE 5: Viewer inside an org
+            # ----------------------------------------------------------
+            elif user_role == "viewer":
+                members_list = []
+                orphan_viewer_qs = Scanlog.objects.filter(user=user, group='none', role='viewer')
+                org_viewer_qs = Scanlog.objects.filter(organization__id=normalized_org_id, role='viewer')
+                logs_qs = (orphan_viewer_qs | org_viewer_qs).distinct().values(
+                    "scan_name",
+                    "role",
+                    "status_code",
+                    "timestamp",
+                    "json_data",
+                    "organization_id",
+                    "user__id",
+                    "user__username",
+                   "user__userprofile__name"
+                )
+
+            # ----------------------------------------------------------
+            # CASE 6: Analyst → Only own logs
+            # ----------------------------------------------------------
             else:
                 members_list = []
                 logs_qs = Scanlog.objects.filter(
@@ -402,6 +499,7 @@ class GetPaginatedScanLogs(APIView):
                 ).values(
                     "scan_name",
                     "role",
+                    "status_code",
                     "timestamp",
                     "json_data",
                     "organization_id",
@@ -410,7 +508,7 @@ class GetPaginatedScanLogs(APIView):
                     "user__userprofile__name"
                 )
 
-            # --- Apply time filter ---
+            # Time filter
             if time_filter:
                 now_time = now()
                 if time_filter == "today":
@@ -421,17 +519,15 @@ class GetPaginatedScanLogs(APIView):
                     start_of_week = now_time - timedelta(days=now_time.weekday())
                     logs_qs = logs_qs.filter(timestamp__gte=start_of_week)
                 elif time_filter == "this_month":
-                    logs_qs = logs_qs.filter(timestamp__year=now_time.year, timestamp__month=now_time.month)
+                    logs_qs = logs_qs.filter(timestamp_year=now_time.year, timestamp_month=now_time.month)
                 elif time_filter == "this_year":
                     logs_qs = logs_qs.filter(timestamp__year=now_time.year)
 
-            # --- Ordering ---
-            if order not in ["asc", "desc"]:
-                order = "desc"
+            # Ordering
             ordering = order_by if order == "asc" else f"-{order_by}"
             logs_qs = logs_qs.order_by(ordering)
 
-            # --- Pagination ---
+            # Pagination
             paginator = Paginator(list(logs_qs), page_size)
             page_obj = paginator.get_page(page)
             logs_list = list(page_obj.object_list)
