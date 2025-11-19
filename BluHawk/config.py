@@ -5,11 +5,11 @@ allowed_roles = [
 ]
 
 TRACKED_ENDPOINTS = {
-    "find_intel", 
+    # "find_intel", 
     # "my_intel_search", 
-    "wapiti_scan", 
-    "port_scan", 
-    "subdomain_search", 
+    # "wapiti_scan", 
+    # "port_scan", 
+    # "subdomain_search", 
     "company_profile",
     "wallet",
     # "wallet-history",
@@ -24,10 +24,18 @@ TRACKED_ENDPOINTS = {
     "get_phone_info",
     "get_nrich",
     # "cpe_search",
+    "attack-surface-scan",   
+    "find_intel_full_scan",
+    "my_intel_search",
+    "cpe_search",
+    "graph-search",
+    'get_report',
 }
 
 
 TRACKED_ENDPOINTS_NAMES = {
+    "find_intel_full_scan": {"name":"Full Threat Intel Scan", "page":"Threat Intel"},
+    "attack-surface-scan": {"name":"Attack Surface Scan", "page":"Attack Surface page"},
     "cpe_search": {"name":"CPE Search", "page":"Vulnerability Intel"},
     "find_intel": {"name":"Target Analysis",
                    "page":"Threat Intel"
@@ -49,6 +57,10 @@ TRACKED_ENDPOINTS_NAMES = {
     "get_ssl_info":{"name":"SSL Info", "page":"WildCard Intel"},
     "get_phone_info": {"name":"Phone Info", "page":"WildCard Intel"},
     "get_nrich":{"name":"Scan For CVE", "page":"WildCard Intel"},
+    "cpe_search":{"name":"Vendor and Product Details", "page":"My Intel"},
+    "my_intel_search":{"name":"My Intel Searches", "page":"My Intel"},
+    "graph-search":{"name":"Threat Graph Explorer", "page":"VT Graph Search"},
+    "get_report":{"name":"File Analysis Report", "page":"File Analysis"},
 }
 
 
@@ -74,7 +86,13 @@ view_display_pairs = {
     'subdomain_search': 'Subdomain Finder',
     # 'full_subdomain_search': 'Full Subdomain Enumeration',
     'get_report': 'File Analysis',
-    'find_intel_full_scan':'Full Threat Intel Scan'
+    'find_intel_full_scan':'Full Threat Intel Scan',
+    'my_intel_search':'Threat Intelligence Search',
+    'cpe_search':'Vendor & Product Intelligence',
+    'upload-file': 'Scan File (Malware Analysis)',
+    'graph-search': 'Threat Graph Explorer',
+    'get_report': 'File Analysis',
+
 }
 
 COMMON_TCP_PORTS = [
@@ -128,9 +146,13 @@ role_based_views = {
         "subdomain_search",
         "get_report",
         "find_intel_full_scan",
+        "my_intel_search",
+        "cpe_search",
+        "upload-file", 
+        'graph-search',
+        'get_report',
     ],
     "analyst": [
-        "find_intel_full_scan",
         "get_username",
         "get_deep_account",
         "get_wayback",
@@ -143,16 +165,18 @@ role_based_views = {
         "port_scan",
         "subdomain_search",
         "get_report",
+        "my_intel_search",
+        "cpe_search",
+        "upload-file", 
+        'graph-search',
+        'get_report',
     ],
     "viewer": [
-        "get_username",
-        "get_deep_account",
-        "get_wayback",
-        "get_ssl_info",
-        "wallet",
-        "wallet-history",
-        "nftswallet-history",
-        "get_report",
+        "my_intel_search",
+        "cpe_search",
+        "upload-file",
+        'get_report',
+    
     ]
 }
 
