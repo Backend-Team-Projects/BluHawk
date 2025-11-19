@@ -21,7 +21,7 @@ def port_scanner(ip_or_domain, **kwargs):
                 "data": []
             }
 
-        api = shodan.Shodan(myenv.SHODAN_API)
+        api = shodan.Shodan(myenv.SHODAN_API_KEY)
         host = api.host(ip)
 
         response = {
