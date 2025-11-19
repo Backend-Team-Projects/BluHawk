@@ -11,7 +11,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 VIRUS_TOTAL = os.getenv("VIRUS_TOTAL")
 POSTGRESQL_PASSWORD = os.getenv("POSTGRESQL_PASSWORD")
 SUPERUSER_PASSWORD = os.getenv("SUPERUSER_PASSWORD")
-SHODAN_API = os.getenv('SHODAN_API')
+SHODAN_API_KEY = os.getenv('SHODAN_API_KEY')   
 AlienVault_API = os.getenv('AlienVault_API')
 EXA_API = os.getenv('EXA_API')
 

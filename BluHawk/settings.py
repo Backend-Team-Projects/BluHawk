@@ -285,9 +285,9 @@ CACHES = {
     }
 }
 
-from .load_env import VIRUS_TOTAL
-
+from .load_env import VIRUS_TOTAL, SHODAN_API_KEY
 VIRUSTOTAL_API_KEY = VIRUS_TOTAL
+SHODAN_API_KEY = SHODAN_API_KEY
 
 
 LOGGING = {

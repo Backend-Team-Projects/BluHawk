@@ -149,7 +149,7 @@ def get_all_dns_records(subdomain_set):
 def fetch_shodan_full_data(ip):
     """Fetch data for a given IP address from external sources."""
     print(f"[+] Fetching Shodan data for IP {ip}")
-    SHODAN_API_KEY = os.getenv("SHODAN_API")
+    SHODAN_API_KEY = os.getenv("SHODAN_API_KEY")
     if not SHODAN_API_KEY:
         logger.warning(f"No SHODAN_API key set for IP {ip}")
         print(f"[+] Shodan data fetch failed for IP {ip}: No API key")
