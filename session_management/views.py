@@ -866,7 +866,7 @@ class InviteUserToOrganization(APIView):
         try:
             # Generate unique verification token
             verification_code = uuid.uuid4().hex
-            verification_url = f"{myenv.site_domain}invites/{verification_code}"
+            verification_url = f"{myenv.site_domain}invitation/{verification_code}"
 
             # Email content (HTML and plain text)
             html_content = render_to_string("organization_invitation.html", {
