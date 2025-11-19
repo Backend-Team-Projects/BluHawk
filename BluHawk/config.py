@@ -28,7 +28,6 @@ TRACKED_ENDPOINTS = {
     "find_intel_full_scan",
     "my_intel_search",
     "cpe_search",
-    "graph-search",
     'get_report',
 }
 
