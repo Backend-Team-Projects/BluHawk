@@ -631,7 +631,14 @@ def generate_attack_surface_report(domain, scan_type='complete'):
         print(f"[+] HTTP/HTTPS status check completed for {len(targets)} targets")
 
     def shodan_nrich_task(targets):
-        """Run Shodan and nrich scans for the provided targets, combining CVEs into nrich vulns."""
+        """Run Shodan and nrich scans for the provided targets, combining CVEs into nrich vulns.
+
+        Modifications:
+        - If port scanner returns no ports for an IP, immediately fallback to Shodan ports (if available)
+        and store them in results["port_map"][ip] so later steps (port_descriptions, summary) see them.
+        - Normalize port values to ints.
+        - Use the normalized results["port_map"][ip] when generating port descriptions.
+        """
         print(f"[+] Performing Shodan and nrich scans for {len(targets)} targets")
         logger.debug(f"Starting Shodan/nrich task for targets: {targets}")
         ip_address_map = get_all_ipv4s(targets)
@@ -673,13 +680,25 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                     print(f"[+] Port scan exception for {ip}, retrying")
                     if attempt < max_retries - 1:
                         time.sleep(5)
-            
+
             with lock:
-                if port_scan_result and port_scan_result.get('status') == 'success':
-                    results["port_map"][ip] = port_scan_result.get('data', [])
+                if port_scan_result and port_scan_result.get('status') == 'success' and port_scan_result.get('data'):
+                    # Normalize scanner ports to ints where possible
+                    normalized = []
+                    for p in port_scan_result.get('data', []):
+                        try:
+                            normalized.append(int(p))
+                        except Exception:
+                            try:
+                                digits = re.findall(r"\d+", str(p))
+                                if digits:
+                                    normalized.append(int(digits[0]))
+                            except Exception:
+                                continue
+                    results["port_map"][ip] = list(dict.fromkeys(normalized))  # deduplicate preserving order
                     update_task_progress(scan_record, f"port_scan_{ip}", "completed", f"Network service check completed for IP {ip}", port_scan_result)
-                    logger.debug(f"Port scan completed for IP {ip}")
-                    print(f"[+] Port scan completed for IP {ip}")
+                    logger.debug(f"Port scan completed for IP {ip}: {results['port_map'][ip]}")
+                    print(f"[+] Port scan completed for IP {ip}: {results['port_map'][ip]}")
                 else:
                     results["port_map"][ip] = []
                     error_msg = port_scan_result.get('error', 'Unknown error') if port_scan_result else 'No response from port scanner'
@@ -696,6 +715,34 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                 update_task_progress(scan_record, f"shodan_scan_{ip}", "completed", f"Shodan data collected for IP {ip}", shodan_result)
                 logger.debug(f"Shodan data collected for IP {ip}")
 
+            # If scanner returned no ports, fallback immediately to Shodan ports (if available)
+            try:
+                with lock:
+                    current_ports = results.get("port_map", {}).get(ip, []) or []
+                if not current_ports and isinstance(shodan_result, dict) and shodan_result.get("ports"):
+                    fallback_ports = []
+                    for p in shodan_result.get("ports", []):
+                        try:
+                            fallback_ports.append(int(p))
+                        except Exception:
+                            try:
+                                digits = re.findall(r"\d+", str(p))
+                                if digits:
+                                    fallback_ports.append(int(digits[0]))
+                            except Exception:
+                                continue
+                    fallback_ports = list(dict.fromkeys(fallback_ports))
+                    if fallback_ports:
+                        with lock:
+                            # update results so subsequent steps use the fallback ports
+                            results.setdefault("port_map", {})[ip] = fallback_ports
+                            logger.info(f"Port scanner empty for {ip}; using Shodan fallback ports: {fallback_ports}")
+                            update_task_progress(scan_record, f"port_scan_{ip}", "completed", f"Port scanner returned no ports; used Shodan fallback ports for IP {ip}", {"fallback_ports": fallback_ports})
+                            print(f"[+] Used Shodan fallback ports for {ip}: {fallback_ports}")
+            except Exception as e:
+                logger.warning(f"Failed to apply Shodan fallback ports for {ip}: {str(e)}")
+                print(f"[+] Shodan fallback ports application failed for {ip}: {str(e)}")
+
             # Fetch nrich data
             print(f"[+] Fetching nrich data for IP {ip}")
             update_task_progress(scan_record, f"nrich_scan_{ip}", "in_progress", f"Collecting nrich data for IP {ip}")
@@ -707,7 +754,7 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                         nrich_data = nrich_result["data"][0]
                         combined_vulns = set(nrich_data.get("vulns", []))  # Start with nrich vulns
                         combined_vulns.update(nrich_data.get("cve_vulns", {}).keys())  # Add nrich cve_vulns
-                        if "vulns" in shodan_result and shodan_result["vulns"]:
+                        if isinstance(shodan_result, dict) and "vulns" in shodan_result and shodan_result["vulns"]:
                             combined_vulns.update(shodan_result["vulns"])  # Add Shodan vulns
                         nrich_data["vulns"] = list(combined_vulns)  # Update vulns field
                         results["nrich_data"][ip] = nrich_data
@@ -730,7 +777,7 @@ def generate_attack_surface_report(domain, scan_type='complete'):
 
             # Fetch technology descriptions for Shodan technologies or fallback to nrich CPEs
             technologies = []
-            if "technologies" in shodan_result and shodan_result["technologies"]:
+            if isinstance(shodan_result, dict) and shodan_result.get("technologies"):
                 technologies = shodan_result["technologies"]
                 logger.debug(f"Using Shodan technologies for IP {ip}: {technologies}")
                 print(f"[+] Using Shodan technologies for IP {ip}: {len(technologies)} found")
@@ -744,8 +791,9 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                     logger.debug(f"Generated {len(technologies)} technologies from CPEs for IP {ip}: {technologies}")
                     print(f"[+] Generated {len(technologies)} technologies from CPEs for IP {ip}")
                     shodan_result["technologies"] = technologies  # Update shodan_result with CPE-derived technologies
-                    results["shodan_data"][ip] = shodan_result
-                    update_task_progress(scan_record, f"shodan_scan_{ip}", "completed", f"Shodan data updated with {len(technologies)} CPE-derived technologies for IP {ip}", shodan_result)
+                    with lock:
+                        results["shodan_data"][ip] = shodan_result
+                        update_task_progress(scan_record, f"shodan_scan_{ip}", "completed", f"Shodan data updated with {len(technologies)} CPE-derived technologies for IP {ip}", shodan_result)
                 else:
                     error_msg = nrich_result.get("error", "No data returned from nrich") if nrich_result else "Failed to fetch nrich data"
                     logger.warning(f"No technologies generated for IP {ip}: {error_msg}")
@@ -774,14 +822,29 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                     update_task_progress(scan_record, f"technology_description_{ip}", "skipped", f"No technologies found for IP {ip}")
                     print(f"[+] Technology description fetch skipped for IP {ip}: No technologies found")
 
-            # Fetch port descriptions for up to 5 ports per IP
-            ports = port_scan_result.get('data', []) if port_scan_result and port_scan_result.get('status') == 'success' else []
-            if ports:
-                print(f"[+] Processing port descriptions for {len(ports)} ports on IP {ip}")
+            # Fetch port descriptions for up to 5 ports per IP — use results["port_map"][ip] (which may include Shodan fallback)
+            with lock:
+                ports_for_ip = results.get("port_map", {}).get(ip, []) or []
+            if ports_for_ip:
+                print(f"[+] Processing port descriptions for {len(ports_for_ip)} ports on IP {ip}")
                 update_task_progress(scan_record, f"port_description_{ip}", "in_progress", f"Fetching descriptions for ports on IP {ip}")
                 port_descriptions = {}
+                # Ensure we work with ints
+                normalized_ports = []
+                for p in ports_for_ip:
+                    try:
+                        normalized_ports.append(int(p))
+                    except Exception:
+                        try:
+                            digits = re.findall(r"\d+", str(p))
+                            if digits:
+                                normalized_ports.append(int(digits[0]))
+                        except Exception:
+                            continue
+                normalized_ports = list(dict.fromkeys(normalized_ports))
+
                 # Check database for existing descriptions
-                cached_ports = PortDescription.objects.filter(port__in=ports)
+                cached_ports = PortDescription.objects.filter(port__in=normalized_ports)
                 cached_port_nums = [p.port for p in cached_ports]
                 port_descriptions.update({
                     p.port: {
@@ -795,7 +858,7 @@ def generate_attack_surface_report(domain, scan_type='complete'):
 
                 # Select additional ports to fetch, up to a total of 5
                 remaining_slots = 5 - len(cached_port_nums)
-                ports_to_fetch = [p for p in ports if p not in cached_port_nums][:remaining_slots]
+                ports_to_fetch = [p for p in normalized_ports if p not in cached_port_nums][:remaining_slots]
                 logger.debug(f"Fetching descriptions for {len(ports_to_fetch)} additional ports on IP {ip}: {ports_to_fetch}")
                 print(f"[+] Fetching descriptions for {len(ports_to_fetch)} additional ports on IP {ip}")
 
@@ -818,6 +881,7 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                     print(f"[+] Port description fetch skipped for IP {ip}: No ports found")
 
         print(f"[+] Shodan and nrich scans completed for {len(targets)} targets")
+
 
     def subdomain_task():
         """Run subdomain discovery, active subdomain checks, and initiate subsequent tasks."""
@@ -912,34 +976,124 @@ def generate_attack_surface_report(domain, scan_type='complete'):
                 update_task_progress(scan_record, "subdomain_discovery", "error", f"Subdomain discovery failed: {str(e)}")
 
     def compile_report():
-        """Compile the final report from thread results."""
+        """Compile the final report from thread results.
+
+        Modified port counting:
+        - For each IP, prefer ports discovered by the port scanner (results["port_map"][ip]).
+        - If port scanner returned an empty list for an IP, fallback to Shodan ports (results["shodan_data"][ip]["ports"]).
+        - Normalize port values (strings -> ints) and ignore invalid entries.
+        - Summary["ports"] contains the count of UNIQUE ports across all IPs.
+        - Also updates results["port_map"] to include Shodan-derived ports where scanner returned empty.
+        """
         print(f"[+] Compiling attack surface report for {domain}")
+        # Basic counts (unchanged)
         num_subdomains = len(results["subdomains"])
         num_ip_addresses = len(set(ip for ips in results["ip_address_map"].values() for ip in ips))
-        num_dns_records = sum(len(results["dns_records"][sub].get(rtype, [])) for sub in results["dns_records"] for rtype in results["dns_records"][sub])
-        if "error" not in results["email_hygiene"]:
-            if results["email_hygiene"]["spf"]["Records"]:
+
+        # DNS records count
+        num_dns_records = 0
+        for sub in results["dns_records"]:
+            for rtype in results["dns_records"][sub]:
+                num_dns_records += len(results["dns_records"][sub].get(rtype, []))
+
+        if "error" not in results.get("email_hygiene", {}):
+            if results["email_hygiene"].get("spf", {}).get("Records"):
                 num_dns_records += 1
-            num_dns_records += len(results["email_hygiene"]["dkim"]["Records"])
-            if results["email_hygiene"]["dmarc"]["Records"]:
+            num_dns_records += len(results["email_hygiene"].get("dkim", {}).get("Records", []))
+            if results["email_hygiene"].get("dmarc", {}).get("Records"):
                 num_dns_records += 1
-            if results["email_hygiene"]["bimi"]["Records"]:
+            if results["email_hygiene"].get("bimi", {}).get("Records"):
                 num_dns_records += 1
-        num_technologies = sum(len(results["shodan_data"][ip].get("technologies", [])) for ip in results["shodan_data"] if "technologies" in results["shodan_data"][ip])
-        num_ssl_records = sum(1 for sub in results["ssl_comprehensive"] if "error" not in results["ssl_comprehensive"][sub])
-        num_whois_records = 1 if "error" not in results["whois"] else 0
+
+        num_technologies = sum(len(results["shodan_data"].get(ip, {}).get("technologies", [])) for ip in results["shodan_data"])
+        num_ssl_records = sum(1 for sub in results["ssl_comprehensive"] if "error" not in results["ssl_comprehensive"].get(sub, {}))
+        num_whois_records = 1 if "error" not in results.get("whois", {}) else 0
+
         # Count only non-empty Wapiti vulnerabilities
-        num_vulnerabilities = sum(1 for key, value in results["wapiti"].get("vulnerabilities", {}).items() if isinstance(value, list) and len(value) > 0) if results["wapiti"] else 0
-        num_ports = sum(len(results["port_map"][ip]) for ip in results["port_map"])
+        num_vulnerabilities = 0
+        try:
+            if results.get("wapiti"):
+                for key, value in results["wapiti"].get("vulnerabilities", {}).items():
+                    if isinstance(value, list) and len(value) > 0:
+                        num_vulnerabilities += 1
+        except Exception:
+            num_vulnerabilities = 0
+
+        # --- Port counting: prefer port_map, fallback to shodan ---
+        unique_ports = set()
+        total_ports_by_ip = {}  # keep a per-ip resolved list for possible debugging/reporting
+
+        # Determine IP list to iterate over: union of keys from port_map and shodan_data
+        port_map_ips = set(results.get("port_map", {}).keys())
+        shodan_ips = set(results.get("shodan_data", {}).keys())
+        all_ips = port_map_ips.union(shodan_ips)
+
+        for ip in all_ips:
+            # Prefer scanner data if it exists and is non-empty
+            ports_from_scanner = results.get("port_map", {}).get(ip, []) or []
+            resolved_ports = []
+
+            if ports_from_scanner:
+                # normalize to ints where possible
+                for p in ports_from_scanner:
+                    try:
+                        resolved_ports.append(int(p))
+                    except Exception:
+                        # try to extract digits if it's a string like "80/udp"
+                        try:
+                            digits = re.findall(r"\d+", str(p))
+                            if digits:
+                                resolved_ports.append(int(digits[0]))
+                        except Exception:
+                            continue
+            else:
+                # fallback to shodan
+                shodan_entry = results.get("shodan_data", {}).get(ip, {})
+                shodan_ports = shodan_entry.get("ports", []) if isinstance(shodan_entry, dict) else []
+                for p in shodan_ports or []:
+                    try:
+                        resolved_ports.append(int(p))
+                    except Exception:
+                        try:
+                            digits = re.findall(r"\d+", str(p))
+                            if digits:
+                                resolved_ports.append(int(digits[0]))
+                        except Exception:
+                            continue
+                # Update results["port_map"] so the report includes the fallback ports (keeps original empty scanner lists replaced)
+                if resolved_ports:
+                    # store as list of ints for consistency
+                    results.setdefault("port_map", {})[ip] = resolved_ports
+
+            # Deduplicate per-IP and add to global unique set
+            resolved_ports = list(set(resolved_ports))
+            total_ports_by_ip[ip] = resolved_ports
+            for p in resolved_ports:
+                unique_ports.add(p)
+
+        # Final port metrics
+        num_unique_ports = len(unique_ports)
+
+        # Keep backward compatibility: summary["ports"] previously expected a single number.
+        # We set it to the number of unique ports across all IPs (this prevents double-counting the same service on multiple IPs).
+        num_ports = num_unique_ports
+
         # Count unique CVEs from Shodan and nrich
         unique_cves = set()
-        for ip in results["shodan_data"]:
+        for ip in results.get("shodan_data", {}):
             if "vulns" in results["shodan_data"][ip]:
-                unique_cves.update(results["shodan_data"][ip]["vulns"])
-        for ip in results["nrich_data"]:
-            if "error" not in results["nrich_data"][ip]:
+                try:
+                    unique_cves.update(results["shodan_data"][ip].get("vulns", []))
+                except Exception:
+                    pass
+        for ip in results.get("nrich_data", {}):
+            if "error" not in results["nrich_data"].get(ip, {}):
                 if "vulns" in results["nrich_data"][ip]:
-                    unique_cves.update(results["nrich_data"][ip]["vulns"])
+                    try:
+                        unique_cves.update(results["nrich_data"][ip].get("vulns", []))
+                    except Exception:
+                        pass
+
         summary = {
             "subdomains": num_subdomains,
             "ip_addresses": num_ip_addresses,
@@ -948,14 +1102,16 @@ def generate_attack_surface_report(domain, scan_type='complete'):
             "ssl_records": num_ssl_records,
             "whois_records": num_whois_records,
             "vulnerabilities": num_vulnerabilities,
-            "ports": num_ports,
+            "ports": num_ports,               # number of unique ports across all IPs (uses shodan fallback)
             "cves": len(unique_cves)
         }
+
+        # Include the (possibly updated) port_map in the report so callers see the shodan-fallback ports
         report = {
             "domain": domain,
             "scan_type": scan_type,
             "subdomains": results["subdomains"],
-            "ports": results["port_map"],
+            "ports": results.get("port_map", {}),
             "ip_addresses": results["ip_address_map"],
             "active_subdomains": results["active_subdomains"],
             "dns_records": results["dns_records"],
@@ -972,6 +1128,7 @@ def generate_attack_surface_report(domain, scan_type='complete'):
             "summary": summary,
             "generated_at": now().strftime("%Y-%m-%d %H:%M:%S")
         }
+
         with lock:
             scan_record.jsondata = report
             scan_record.status = "completed"
@@ -980,6 +1137,7 @@ def generate_attack_surface_report(domain, scan_type='complete'):
             logger.info(f"Attack surface report compiled for {domain}: {summary}")
             print(f"[+] Attack surface report compilation completed for {domain}")
         return report
+
 
     try:
         stop_event = threading.Event()
