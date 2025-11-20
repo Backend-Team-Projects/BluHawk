@@ -378,14 +378,10 @@ class GetPaginatedScanLogs(APIView):
                     "user__userprofile__name",
                 )
 
-                # Time filter
                 logs_qs = self.apply_time_filter(logs_qs, time_filter)
-
-                # Ordering
                 ordering = order_by if order == "asc" else f"-{order_by}"
                 logs_qs = logs_qs.order_by(ordering)
 
-                # Pagination
                 paginator = Paginator(list(logs_qs), page_size)
                 page_obj = paginator.get_page(page)
 
@@ -430,7 +426,7 @@ class GetPaginatedScanLogs(APIView):
             user_role = membership.role
 
             # ==========================================================
-            # CASE 4: ADMIN → View logs from ALL members
+            # CASE 4: ADMIN → View logs from ALL members (FIX APPLIED)
             # ==========================================================
             if user_role == "admin":
 
@@ -447,11 +443,12 @@ class GetPaginatedScanLogs(APIView):
 
                 user_ids_in_org = [m.user.id for m in members_qs]
 
+                # FIXED → Restricted logs to selected organization only
                 logs_qs = Scanlog.objects.filter(
-                    user_id__in=user_ids_in_org
+                    user_id__in=user_ids_in_org,
+                    organization__id=normalized_org_id   # <-- FIX HERE
                 )
 
-                # NEW → Filter by username
                 if username_filter:
                     logs_qs = logs_qs.filter(user__username=username_filter)
 
